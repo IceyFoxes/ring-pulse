@@ -554,6 +554,11 @@
   const metrics = store.get(KEY_METRICS, {});
   let support = store.get(KEY_SUPPORT, null);
   const saveSleep = () => { store.set(KEY_SLEEP, sleeps); store.set(KEY_METRICS, metrics); };
+  if (metrics.hrv && metrics.stress) {
+    // Earlier versions put the body-data HRV score (0–10) into HRV ms; drop those.
+    for (const t of Object.keys(metrics.hrv)) if (metrics.hrv[t] < 12 && t in metrics.stress) delete metrics.hrv[t];
+    store.set(KEY_METRICS, metrics);
+  }
 
   // ── Time helpers (ring stores local time as seconds since 2000-01-01) ──
   const pad = (n) => String(n).padStart(2, "0");
@@ -816,18 +821,16 @@
         for (let i = 0; i + 8 <= d.length; i += 8) { const at = ringTime(d, i); n += putMetric("sbp", at, d[i + 5]); putMetric("dbp", at, d[i + 6]); }
         return n && "blood pressure";
       }],
-      // Body data: [time u32, load int.frac, HRV int.frac, stress int.frac, ...] (28 bytes)
+      // Body data: [time u32, load, HRV score, stress, body, sympathetic (each int.frac, 0–10), SDNN u16, ...] (28 bytes).
+      // On the RW009 the HRV here is a 0–10 score, so it is kept apart from HRV in ms (combined log).
       ["stress & HRV", OP.HIST_BODY, (d) => {
         let n = 0;
-        for (let i = 0; i + 28 <= d.length; i += 28) { const at = ringTime(d, i); n += putMetric("stress", at, dec(d[i + 8], d[i + 9])); n += putMetric("hrv", at, dec(d[i + 6], d[i + 7])); }
-        return n && "stress/HRV";
+        for (let i = 0; i + 28 <= d.length; i += 28) { const at = ringTime(d, i); n += putMetric("stress", at, dec(d[i + 8], d[i + 9])); putMetric("hrvscore", at, dec(d[i + 6], d[i + 7])); }
+        return n && "stress";
       }],
-      // Comprehensive measurements: [time u32, sugar model, sugar int.frac, ...] (44 bytes)
-      ["blood sugar", OP.HIST_COMPREHENSIVE, (d) => {
-        let n = 0;
-        for (let i = 0; i + 44 <= d.length; i += 44) n += putMetric("sugar", ringTime(d, i), dec(d[i + 5], d[i + 6]));
-        return n && "blood sugar";
-      }],
+      // Comprehensive measurements (44 bytes). The RW009 lays these out differently from the SDK
+      // (the SDK's sugar byte is a constant here), so it is downloaded for the log but not decoded.
+      ["comprehensive", OP.HIST_COMPREHENSIVE, () => 0],
       // Health monitoring: [time u32, steps u32, HR, SBP, DBP, SpO2, resp, HRV, ...] (29 bytes)
       ["health monitoring", OP.HIST_MONITOR, (d) => {
         let n = 0;
@@ -1495,8 +1498,8 @@
     spo2: { title: "Blood oxygen", unit: "%", kinds: ["spo2"], monitor: ["SET_SPO2_MONITOR", "blood oxygen"] },
     hrv: { title: "HRV", unit: "ms", kinds: ["hrv"],
       note: "Heart-rate variability: higher usually means more rested and recovered. Compare it with your own trend over days, not with other people's numbers." },
-    stress: { title: "Stress", unit: "", kinds: ["stress"],
-      note: "A stress score the ring calculates from heart-rate variability. Treat it as a rough day-to-day trend, not a diagnosis." },
+    stress: { title: "Stress", unit: "/ 10", kinds: ["stress"],
+      note: "A 0–10 stress score the ring calculates from heart-rate variability (higher = more stressed). Treat it as a rough day-to-day trend, not a diagnosis." },
     bp: { title: "Blood pressure", unit: "mmHg", kinds: ["sbp", "dbp"], names: ["Systolic", "Diastolic"], monitor: ["SET_BP_MONITOR", "blood pressure"],
       note: "Estimated by the ring's optical sensor, not measured with a cuff. It can be far off; don't base medical decisions on it. Use a cuff monitor if blood pressure matters to you." },
     sugar: { title: "Blood sugar", unit: "mmol/L", kinds: ["sugar"],
