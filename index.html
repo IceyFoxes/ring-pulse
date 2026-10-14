@@ -424,6 +424,7 @@
       <section class="card" id="otherCard">
         <h2>What the ring records</h2>
         <p class="hint" id="supportLine"></p>
+          <div class="tablewrap" id="reportBox" hidden><table><thead><tr><th>Data</th><th>On ring</th><th>New</th><th>Status</th></tr></thead><tbody id="reportRows"></tbody></table></div>
         <div id="featBox" hidden>
           <span class="subhead">What the ring says it supports</span>
           <ul class="feats" id="feats"></ul>
@@ -443,6 +444,7 @@
         <p class="hint">Heart rate, sleep and other stats are kept in this browser on this phone. Export saves them all in one CSV. Import also accepts <code>heart_history.csv</code> from the PC script.</p>
         <details>
           <summary>Bluetooth log</summary>
+            <button id="btnCopyLog" class="small">Copy log</button>
           <pre id="log"></pre>
         </details>
       </section>
@@ -545,7 +547,9 @@
   const save = () => store.set(KEY, [...readings].sort((a, b) => a[0] < b[0] ? -1 : 1));
   const KEY_SLEEP = "ringpulse.sleep.v1";     // start stamp -> session
   const KEY_METRICS = "ringpulse.metrics.v1"; // kind -> { stamp: value }
-  const KEY_SUPPORT = "ringpulse.support.v1"; // history type -> "ok" | "empty" | "unsupported" | "error"
+  const KEY_SUPPORT = "ringpulse.support.v1";
+  const KEY_REPORT = "ringpulse.syncreport.v1"; // {at, rows: [name, status, countOnRing, newSaved]}
+  let lastHeartCount = 0, lastHeartNew = 0; // history type -> "ok" | "empty" | "unsupported" | "error"
   const sleeps = store.get(KEY_SLEEP, {});
   const metrics = store.get(KEY_METRICS, {});
   let support = store.get(KEY_SUPPORT, null);
@@ -693,11 +697,11 @@
     if (!head) throw new Error(`The ring didn't answer the ${name} request. Try Sync again.`);
     if (head.payload.length === 1 && head.payload[0] >= 0xFB) {
       log(`${name}: not supported by this ring`);
-      return { status: "unsupported", data: [] };
+      return { status: "unsupported", data: [], count: 0 };
     }
     const count = head.payload.length >= 2 ? head.payload[0] | (head.payload[1] << 8) : 0;
     log(`${name}: ring reports ${count} stored record${count === 1 ? "" : "s"}`);
-    if (count === 0) return { status: "empty", data: [] };
+    if (count === 0) return { status: "empty", data: [], count: 0 };
     const end = await waitFor((f) => f.op === OP.HIST_BLOCK_END, 15000, start);
     if (!end) throw new Error(`The ring stopped sending ${name} partway. Try Sync again.`);
     const data = frames.slice(start)
@@ -708,7 +712,7 @@
     const ok = data.length === nbytes && crc16(data) === crc;
     await send(OP.HIST_BLOCK_END, [ok ? 0 : 4]);
     if (!ok) throw new Error(`${name} arrived damaged (checksum mismatch). Try Sync again.`);
-    return { status: "ok", data };
+    return { status: "ok", data, count };
   }
 
   // Decoders (record layouts from the vendor SDK). Ring times are local wall-clock seconds since 2000.
@@ -835,18 +839,31 @@
         return n && "health log";
       }],
     ];
+    const stored = () => Object.keys(sleeps).length + Object.entries(metrics).reduce((a, [k, m]) => a + (k === "stepsEnd" || k === "dbp" ? 0 : Object.keys(m).length), 0);
+    const report = [["heart rate", "ok", lastHeartCount, lastHeartNew]];
     for (const [name, op, apply] of types) {
       try {
-        const { status, data } = await fetchBlock(op, name);
+        const { status, data, count } = await fetchBlock(op, name);
         sup[name] = status;
-        if (status === "ok") { const note = apply(data); if (note) notes.push(note); }
+        let added = 0;
+        if (status === "ok") {
+          const before = stored();
+          const note = apply(data);
+          if (note) notes.push(note);
+          added = stored() - before;
+          log(`${name}: ${count} on ring, ${data.length} bytes, ${added} new value${added === 1 ? "" : "s"} saved`);
+          if (!added) log(`${name}: first bytes ${hex(data.slice(0, 64))}`);
+        }
+        report.push([name, status, count, added]);
       } catch (e) {
         sup[name] = "error";
+        report.push([name, "error", 0, 0]);
         log(`${name}: ${e.message}`);
       }
     }
     support = sup;
     store.set(KEY_SUPPORT, sup);
+    store.set(KEY_REPORT, { at: Date.now(), rows: report });
     saveSleep();
     return notes;
   }
@@ -891,6 +908,7 @@
     setChip("busy", "Syncing…");
     const rows = await fetchHistory();
     const { added, skipped } = merge(rows);
+    lastHeartCount = rows.length; lastHeartNew = added;
     const notes = await syncOthers();
     selSleepDay = null; // jump to the latest sleep day with data
     render();
@@ -995,6 +1013,15 @@
 
   // One CSV for everything: kind,time,end,value,deep_min,light_min,rem_min,awake_min
   // (sleep "value" is minutes asleep). Import also accepts the PC script's time,bpm,mode file.
+  $("btnCopyLog").addEventListener("click", async () => {
+    const text = logEl.textContent;
+    try { await navigator.clipboard.writeText(text); notify("Bluetooth log copied. Paste it into the chat."); }
+    catch {
+      const r = document.createRange(); r.selectNodeContents(logEl);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      notify("Couldn't copy automatically; the log is selected, so use your phone's Copy.");
+    }
+  });
   $("btnExport").addEventListener("click", () => {
     const min = (sec) => Math.round(sec / 60);
     const rows = [];
@@ -1448,6 +1475,12 @@
         no.length && `Not available on this ring: ${no.join(", ")}.`, err.length && `Couldn't read: ${err.join(", ")} (see Bluetooth log).`].filter(Boolean).join(" ");
     }
     $("supportLine").textContent = line || "Sync to see which histories the ring sends.";
+    const rep = store.get(KEY_REPORT, null);
+    $("reportBox").hidden = !rep;
+    if (rep) {
+      const label = { ok: "Has data", empty: "Supported, nothing stored", unsupported: "Not supported", error: "Couldn't read" };
+      $("reportRows").innerHTML = rep.rows.map(([n, st, c, a]) => `<tr><td>${names[n] || n}</td><td>${st === "ok" ? c : "–"}</td><td>${st === "ok" ? a : "–"}</td><td>${label[st] || st}</td></tr>`).join("");
+    }
     const on = featureSet();
     if (on) {
       $("feats").innerHTML = HEALTH_FEATURES.map(([k, label]) => `<li><b class="${on.has(k) ? "yes" : "no"}">${on.has(k) ? "Yes" : "No"}</b>${label}</li>`).join("");
