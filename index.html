@@ -28,6 +28,7 @@
     --st-rem: #1baf7a;
     --st-light: #2a78d6;
     --st-deep: #4a3aa7;
+    --est: #8C97A3;
     --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
     --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -52,6 +53,8 @@
       --st-rem: #199e70;
       --st-light: #3987e5;
       --st-deep: #8a50c8;
+    --est: #6E7B88;
+      --est: #6E7B88;
       color-scheme: dark;
     }
   }
@@ -194,6 +197,19 @@
   .subhead { font: 500 12px/1 var(--body); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .nights tbody tr { cursor: pointer; }
   .nights tbody tr[aria-selected="true"] td { color: var(--ink); font-weight: 500; background: var(--grid); }
+  .sleepstats { grid-template-columns: repeat(2, 1fr); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 12px; height: 9px; border-radius: 2px; flex: none; }
+  .legend i.line { height: 2px; border-radius: 1px; }
+  .legend i.dash { height: 0; border-top: 2px dashed var(--muted); background: none !important; }
+  .periods td { white-space: nowrap; }
+  .periods td:first-child { font-family: var(--body); font-weight: 500; }
+  .periods td.src { color: var(--muted); }
+  .tune { display: grid; grid-template-columns: 1fr 5.5em; gap: 8px 10px; align-items: center; margin-top: 10px; }
+  .tune label { font-size: 14px; color: var(--ink-2); }
+  .tune input { font: 500 15px var(--mono); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px; width: 100%; min-height: 40px; }
+  .tune input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
   .tile dt { font: 500 11px/1.2 var(--body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
@@ -263,20 +279,47 @@
   <section class="card" id="sleepCard">
     <div class="dayhead">
       <h2>Sleep</h2>
-      <span class="subhead" id="nightLabel">Last night</span>
-    </div>
-    <div id="sleepEmpty" class="empty">No sleep recorded yet. Wear the ring overnight, then Sync in the morning.</div>
-    <div id="sleepBody" hidden>
-      <div class="night">
-        <div class="big" id="sleepTotal"></div>
-        <div class="times" id="sleepTimes"></div>
+      <div class="daynav">
+        <button id="prevSleep" aria-label="Previous sleep day">‹</button>
+        <span class="day" id="sleepDayLabel">Today</span>
+        <button id="nextSleep" aria-label="Next sleep day">›</button>
       </div>
+    </div>
+    <p class="hint" id="sleepSpan">Noon to noon</p>
+    <dl class="stats sleepstats">
+      <div class="stat"><dt>Ring recorded</dt><dd id="ringTotal">–</dd></div>
+      <div class="stat"><dt>Estimated</dt><dd id="estTotal">–</dd></div>
+    </dl>
+    <div class="chart" id="timeline"></div>
+    <div class="legend" id="tlLegend"></div>
+    <p class="hint" id="calib" hidden></p>
+    <div class="tablewrap"><table class="periods"><thead><tr><th>Sleep</th><th>Time</th><th>Length</th><th>Source</th></tr></thead><tbody id="periodRows"></tbody></table></div>
+    <p class="empty" id="sleepEmpty" hidden></p>
+    <div id="stageBox" hidden>
+      <span class="subhead" id="stageHead">Stages (ring)</span>
       <dl class="stages" id="stages"></dl>
       <div class="chart" id="hypno"></div>
-      <span class="subhead">Last 7 nights</span>
-      <div class="chart" id="weekChart"></div>
-      <div class="tablewrap"><table class="nights"><thead><tr><th>Night</th><th>Bedtime</th><th>Woke</th><th>Asleep</th></tr></thead><tbody id="nightRows"></tbody></table></div>
     </div>
+    <span class="subhead">Last 7 days</span>
+    <div class="chart" id="weekChart"></div>
+    <div class="legend" id="weekLegend"></div>
+    <details>
+      <summary>Estimate settings</summary>
+      <div class="tune">
+        <label for="tCeil">Asleep when heart rate is at or below (bpm)</label>
+        <input type="number" id="tCeil" inputmode="numeric" min="30" max="120" placeholder="auto">
+        <label for="tOff">Auto: this many bpm above your baseline</label>
+        <input type="number" id="tOff" inputmode="numeric" min="0" max="30">
+        <label for="tMin">Shortest sleep block (min)</label>
+        <input type="number" id="tMin" inputmode="numeric" min="10" max="240">
+        <label for="tGap">Bridge awake gaps up to (min)</label>
+        <input type="number" id="tGap" inputmode="numeric" min="0" max="120">
+        <label for="tSteps">Max steps per 10 min while asleep</label>
+        <input type="number" id="tSteps" inputmode="numeric" min="0" max="500">
+      </div>
+      <p class="hint" id="tuneInfo"></p>
+      <button id="tReset">Reset to defaults</button>
+    </details>
   </section>
 
   <section class="card">
@@ -592,7 +635,7 @@
   }
   function parseSport(d) {
     const out = [];
-    for (let i = 0; i + 14 <= d.length; i += 14) out.push({ at: ringTime(d, i), steps: u16(d, i + 8) });
+    for (let i = 0; i + 14 <= d.length; i += 14) out.push({ at: ringTime(d, i), end: ringTime(d, i + 4), steps: u16(d, i + 8) });
     return out;
   }
   function parseAll(d) {
@@ -628,7 +671,14 @@
         }
         return n && `${n} new sleep session${n === 1 ? "" : "s"}`;
       }],
-      ["steps", OP.HIST_SPORT, (d) => { let n = 0; for (const x of parseSport(d)) n += putMetric("steps", x.at, x.steps); return n && "steps"; }],
+      ["steps", OP.HIST_SPORT, (d) => {
+        let n = 0;
+        for (const x of parseSport(d)) {
+          n += putMetric("steps", x.at, x.steps);
+          if (plausible(x.at)) (metrics.stepsEnd || (metrics.stepsEnd = {}))[stamp(x.at)] = stamp(x.end);
+        }
+        return n && "steps";
+      }],
       ["combined", OP.HIST_ALL, (d) => {
         let n = 0;
         for (const x of parseAll(d)) for (const k of ["spo2", "hrv", "resp", "temp"]) n += putMetric(k, x.at, x[k]);
@@ -695,6 +745,7 @@
     const rows = await fetchHistory();
     const { added, skipped } = merge(rows);
     const notes = await syncOthers();
+    selSleepDay = null; // jump to the latest sleep day with data
     render();
     setChip("on", "Connected");
     let s = `Heart rate: ${rows.length} reading${rows.length === 1 ? "" : "s"} on the ring, ${added} new.`;
@@ -802,7 +853,10 @@
     const rows = [];
     for (const [t, b] of readings) rows.push(["heart", t, "", b]);
     for (const [t, x] of Object.entries(sleeps)) rows.push(["sleep", t, x.end, min(x.deep + x.light + x.rem), min(x.deep), min(x.light), min(x.rem), min(x.awake)]);
-    for (const [kind, m] of Object.entries(metrics)) for (const [t, v] of Object.entries(m)) rows.push([kind, t, "", v]);
+    for (const [kind, m] of Object.entries(metrics)) {
+      if (kind === "stepsEnd") continue;
+      for (const [t, v] of Object.entries(m)) rows.push([kind, t, kind === "steps" ? metrics.stepsEnd?.[t] || "" : "", v]);
+    }
     rows.sort((a, b) => a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0);
     const csv = "kind,time,end,value,deep_min,light_min,rem_min,awake_min\n" + rows.map((r) => r.join(",")).join("\n") + "\n";
     const a = document.createElement("a");
@@ -829,9 +883,12 @@
       if (kind === "heart") { if (!readings.has(t)) { readings.set(t, Number(v)); added++; } }
       else if (kind === "sleep") {
         if (!sleeps[t] && endT) { sleeps[t] = { end: endT, deep: deep * 60, light: light * 60, rem: rem * 60, awake: awake * 60, segs: [] }; added++; }
-      } else if (kind) { added += putMetric(kind, parseStamp(t), Number(v)); }
+      } else if (kind) {
+        added += putMetric(kind, parseStamp(t), Number(v));
+        if (kind === "steps" && endT) (metrics.stepsEnd || (metrics.stepsEnd = {}))[t] = endT;
+      }
     }
-    save(); saveSleep(); usingExample = false;
+    save(); saveSleep(); usingExample = false; selSleepDay = null;
     const latest = latestDay(); if (latest) viewDay = latest;
     render();
     notify(`Imported ${added} new record${added === 1 ? "" : "s"} from ${file.name}.${bad ? ` ${bad} with an impossible date were skipped.` : ""}`);
@@ -914,72 +971,248 @@
   }
 
   // ── Sleep ───────────────────────────────────────────────────────────────
-  // A night is keyed by the date of (bedtime + 12 h): 23:40 on the 13th and 01:30 on the 14th
-  // both count as the night ending on the 14th. Several sessions in one night are combined.
-  let selNight = null;
-  const hm = (sec) => { const m = Math.round(sec / 60); return `${Math.floor(m / 60)} h ${pad(m % 60)} min`; };
+  // A "sleep day" runs noon to noon and is named after the morning it ends on, so an evening
+  // nap and the night after it sit together without being merged. Each block is labelled
+  // Night or Nap from its midpoint (21:00–09:00 = night).
+  const NIGHT_FROM = 21, NIGHT_TO = 9;
+  const hm = (sec) => { const m = Math.round(sec / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${pad(m % 60)} min`; };
   const clock = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  function nights() {
-    const by = {};
-    for (const [k, x] of Object.entries(sleeps)) {
+  const sleepDayOf = (a, b) => dayKey(new Date((a.getTime() + b.getTime()) / 2 + 12 * 36e5));
+  const dayBounds = (k) => { const end = parseStamp(k + " 12:00:00"); return [new Date(end.getTime() - 864e5), end]; };
+  const kindOf = (a, b) => { const h = new Date((a.getTime() + b.getTime()) / 2).getHours(); return h >= NIGHT_FROM || h < NIGHT_TO ? "Night" : "Nap"; };
+
+  function ringSessions() {
+    return Object.entries(sleeps).map(([k, x]) => {
       const start = parseStamp(k), end = parseStamp(x.end);
-      const key = dayKey(new Date(start.getTime() + 12 * 36e5));
-      const n = by[key] || (by[key] = { key, bed: start, wake: end, deep: 0, light: 0, rem: 0, awake: 0, segs: [] });
-      if (start < n.bed) n.bed = start;
-      if (end > n.wake) n.wake = end;
-      for (const s of ["deep", "light", "rem", "awake"]) n[s] += x[s] || 0;
-      for (const [st, off, dur] of x.segs || []) n.segs.push([st, new Date(start.getTime() + off * 1000), dur]);
+      const asleep = (x.deep + x.light + x.rem) || Math.max(0, (end - start) / 1000 - (x.awake || 0));
+      return { start, end, asleep, deep: x.deep || 0, light: x.light || 0, rem: x.rem || 0, awake: x.awake || 0,
+        segs: (x.segs || []).map(([st, off, dur]) => [st, new Date(start.getTime() + off * 1000), dur]) };
+    }).filter((x) => x.end > x.start).sort((a, b) => a.start - b.start);
+  }
+
+  // Estimated sleep from data the ring stores around the clock: heart rate (+ steps when the
+  // ring provides them). A reading counts as "sleep-like" when HR is at or below a ceiling
+  // (your baseline + offset, or a fixed value) and steps are near zero; runs of sleep-like
+  // readings are joined across short gaps and kept if long enough.
+  const TUNE_DEFAULT = { ceiling: null, offset: 8, minBlock: 40, mergeGap: 20, maxSteps: 20 };
+  const KEY_TUNE = "ringpulse.tune.v1";
+  let tune = { ...TUNE_DEFAULT, ...store.get(KEY_TUNE, {}) };
+
+  function hrSeries() {
+    return [...readings].map(([t, b]) => [parseStamp(t), b]).filter(([d]) => plausible(d)).sort((a, b) => a[0] - b[0]);
+  }
+  function sampleInterval(series) {
+    const gaps = [];
+    for (let i = 1; i < series.length; i++) { const g = (series[i][0] - series[i - 1][0]) / 60000; if (g > 0 && g <= 60) gaps.push(g); }
+    gaps.sort((a, b) => a - b);
+    return gaps.length ? gaps[Math.floor(gaps.length / 2)] : 10;
+  }
+  function baseline(series) {
+    const since = Date.now() - 14 * 864e5;
+    const v = series.filter(([d]) => d >= since).map(([, b]) => b).sort((a, b) => a - b);
+    return v.length >= 30 ? v[Math.floor(v.length * 0.1)] : null;   // 10th percentile of the last 14 days ≈ sleeping HR
+  }
+  function stepSpans() {
+    const spans = [];
+    const st = metrics.steps || {}, ends = metrics.stepsEnd || {};
+    for (const [t, v] of Object.entries(st)) {
+      const a = parseStamp(t), b = ends[t] ? parseStamp(ends[t]) : new Date(a.getTime() + 36e5);
+      spans.push([a.getTime(), Math.max(b.getTime(), a.getTime() + 60000), v]);
     }
-    for (const n of Object.values(by)) {
-      n.asleep = n.deep + n.light + n.rem || Math.max(0, (n.wake - n.bed) / 1000 - n.awake);
+    if (!spans.length && metrics.allsteps) {
+      const pts = Object.entries(metrics.allsteps).map(([t, v]) => [parseStamp(t).getTime(), v]).sort((a, b) => a[0] - b[0]);
+      const gaps = pts.slice(1).map((p, i) => p[0] - pts[i][0]).filter((g) => g > 0).sort((a, b) => a - b);
+      const iv = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 36e5;
+      for (const [t, v] of pts) spans.push([t - iv, t, v]);   // a combined record covers the period before it
+    }
+    return spans;
+  }
+  function stepsIn(spans, a, b) {
+    let n = 0;
+    for (const [s0, s1, v] of spans) { const o = Math.min(b, s1) - Math.max(a, s0); if (o > 0) n += v * o / (s1 - s0); }
+    return n;
+  }
+  function estimate() {
+    const series = hrSeries();
+    const iv = sampleInterval(series);
+    const base = baseline(series);
+    const ceiling = tune.ceiling ?? (base != null ? base + tune.offset : null);
+    const spans = stepSpans();
+    const info = { iv, base, ceiling, steps: spans.length > 0, blocks: [] };
+    if (ceiling == null) return info;
+    const ivMs = iv * 60000, gapMs = tune.mergeGap * 60000;
+    let run = null;
+    for (const [d, bpm] of series) {
+      const t = d.getTime();
+      const still = !spans.length || stepsIn(spans, t - ivMs, t) <= tune.maxSteps * iv / 10;
+      if (bpm > ceiling || !still) continue;
+      if (run && t - run.end <= gapMs + 1000) run.end = t + ivMs;
+      else { if (run) info.blocks.push(run); run = { start: t, end: t + ivMs }; }
+    }
+    if (run) info.blocks.push(run);
+    info.blocks = info.blocks.filter((r) => r.end - r.start >= tune.minBlock * 60000)
+      .map((r) => ({ start: new Date(r.start), end: new Date(r.end) }));
+    return info;
+  }
+
+  const overlapMs = (A, B) => { let n = 0; for (const a of A) for (const b of B) n += Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start)); return n; };
+
+  let selSleepDay = null, est = null;
+  function sleepDays() {
+    est = estimate();
+    const by = {};
+    const get = (k) => by[k] || (by[k] = { key: k, ring: [], est: [] });
+    for (const r of ringSessions()) get(sleepDayOf(r.start, r.end)).ring.push(r);
+    for (const e of est.blocks) get(sleepDayOf(e.start, e.end)).est.push(e);
+    for (const d of Object.values(by)) {
+      d.ringTotal = d.ring.reduce((a, r) => a + r.asleep, 0);
+      d.estTotal = d.est.reduce((a, e) => a + (e.end - e.start) / 1000, 0);
     }
     return by;
   }
-  function renderSleep() {
-    const by = nights(), keys = Object.keys(by).sort();
-    const has = keys.length > 0;
-    $("sleepEmpty").hidden = has; $("sleepBody").hidden = !has;
-    if (!has) {
-      $("sleepEmpty").textContent = support?.sleep === "unsupported"
-        ? "This ring doesn't report sleep history."
-        : "No sleep recorded yet. Wear the ring overnight, then Sync in the morning.";
-      $("nightLabel").textContent = "Last night";
-      return;
-    }
-    if (!selNight || !by[selNight]) selNight = keys[keys.length - 1];
-    const n = by[selNight];
-    const latest = selNight === keys[keys.length - 1];
-    $("nightLabel").textContent = latest ? "Last night" : parseStamp(selNight + " 00:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-    $("sleepTotal").innerHTML = (() => { const m = Math.round(n.asleep / 60); return `${Math.floor(m / 60)}<small>h</small>${pad(m % 60)}<small>min asleep</small>`; })();
-    $("sleepTimes").textContent = `Bedtime ${clock(n.bed)} · Woke ${clock(n.wake)} · ${hm((n.wake - n.bed) / 1000)} in bed`;
-    const stageRows = [["deep", "Deep"], ["light", "Light"], ["rem", "REM"], ["awake", "Awake"]];
-    const anyStages = n.deep + n.light + n.rem + n.awake > 0;
-    $("stages").hidden = !anyStages;
-    $("stages").innerHTML = stageRows.map(([k, label]) =>
-      `<div><dt><i style="background:var(--st-${k})"></i>${label}</dt><dd>${Math.round(n[k] / 60)}<small style="font:400 12px var(--mono);color:var(--muted);margin-left:2px">min</small></dd></div>`).join("");
-    drawHypno(n);
-    drawWeek(by, keys);
-    $("nightRows").innerHTML = keys.slice(-7).reverse().map((k) => {
-      const x = by[k];
-      const label = parseStamp(k + " 00:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-      return `<tr data-night="${k}" aria-selected="${k === selNight}"><td>${label}</td><td>${clock(x.bed)}</td><td>${clock(x.wake)}</td><td>${hm(x.asleep)}</td></tr>`;
-    }).join("");
-  }
-  $("nightRows").addEventListener("click", (e) => {
-    const tr = e.target.closest("tr[data-night]"); if (!tr) return;
-    selNight = tr.dataset.night; renderSleep();
-  });
 
-  // Hypnogram: one row per stage (position carries the stage, colour repeats it).
+  function renderSleep() {
+    const by = sleepDays();
+    const nowKey = dayKey(new Date(Date.now() + 12 * 36e5));
+    const keys = Object.keys(by).filter((k) => k <= nowKey).sort();
+    if (!selSleepDay) selSleepDay = keys.length ? keys[keys.length - 1] : nowKey;
+    const day = by[selSleepDay] || { key: selSleepDay, ring: [], est: [], ringTotal: 0, estTotal: 0 };
+    const [d0, d1] = dayBounds(selSleepDay);
+    const lab = (d) => d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    $("sleepDayLabel").textContent = selSleepDay === dayKey(new Date()) ? "Last night" : lab(parseStamp(selSleepDay + " 00:00:00"));
+    $("sleepSpan").textContent = `Noon ${lab(d0)} → noon ${lab(d1)}`;
+    $("nextSleep").disabled = selSleepDay >= nowKey;
+    const tot = (sec, any) => any ? (() => { const m = Math.round(sec / 60); return `${Math.floor(m / 60)}<small>h</small> ${pad(m % 60)}<small>min</small>`; })() : "–";
+    $("ringTotal").innerHTML = tot(day.ringTotal, day.ring.length);
+    $("estTotal").innerHTML = tot(day.estTotal, day.est.length || (est.ceiling != null && hrSeries().some(([d]) => d >= d0 && d < d1)));
+
+    // Periods: ring sessions and estimated blocks, in time order.
+    const rows = [
+      ...day.ring.map((r) => ({ a: r.start, b: r.end, len: r.asleep, src: "Ring" })),
+      ...day.est.map((e) => ({ a: e.start, b: e.end, len: (e.end - e.start) / 1000, src: "Estimate" })),
+    ].sort((x, y) => x.a - y.a || (x.src < y.src ? 1 : -1));
+    $("periodRows").innerHTML = rows.map((r) => `<tr><td>${kindOf(r.a, r.b)}</td><td>${clock(r.a)}–${clock(r.b)}</td><td>${hm(r.len)}</td><td class="src">${r.src}</td></tr>`).join("");
+    const hasHr = hrSeries().some(([d]) => d >= d0 && d < d1);
+    const empty = !rows.length;
+    $("sleepEmpty").hidden = !empty;
+    if (empty) {
+      $("sleepEmpty").textContent = est.ceiling == null
+        ? "Not enough heart-rate history for an estimate yet (it needs about a day of readings). Ring sleep records appear here after you Sync."
+        : hasHr ? "No sleep in this period, from the ring or the estimate." : "No data for this period. Sync to download from the ring.";
+    }
+
+    // Calibration: how well the estimate matches what the ring recorded.
+    const calib = $("calib");
+    if (day.ring.length && day.est.length) {
+      const ring = day.ring.map((r) => ({ start: r.start.getTime(), end: r.end.getTime() }));
+      const es = day.est.map((e) => ({ start: e.start.getTime(), end: e.end.getTime() }));
+      const matched = es.filter((e) => overlapMs([e], ring) > 0), extra = es.filter((e) => !overlapMs([e], ring));
+      const ringMs = ring.reduce((a, r) => a + r.end - r.start, 0);
+      const both = overlapMs(ring, matched), matchedMs = matched.reduce((a, e) => a + e.end - e.start, 0);
+      const parts = [];
+      if (matched.length) {
+        parts.push(`Where the ring recorded sleep, the estimate covers ${Math.round(100 * both / ringMs)}% of it and adds ${hm((matchedMs - both) / 1000)} around the edges.`);
+        parts.push(matchedMs - both > 0.15 * ringMs ? "That runs long: try a lower heart-rate ceiling." : both < 0.8 * ringMs ? "That misses some: try a higher ceiling or a longer gap bridge." : "That's a close match.");
+      } else parts.push("The estimate found nothing during the ring's sleep: try a higher heart-rate ceiling.");
+      if (extra.length) parts.push(`It also found ${hm(extra.reduce((a, e) => a + e.end - e.start, 0) / 1000)} of sleep the ring didn't record (${extra.map((e) => `${clock(new Date(e.start))}–${clock(new Date(e.end))}`).join(", ")}).`);
+      calib.textContent = "Estimate vs ring: " + parts.join(" ");
+      calib.hidden = false;
+    } else calib.hidden = true;
+
+    // Stages for the ring sessions in this period.
+    const st = { deep: 0, light: 0, rem: 0, awake: 0 };
+    for (const r of day.ring) for (const k in st) st[k] += r[k];
+    const anyStages = st.deep + st.light + st.rem + st.awake > 0;
+    $("stageBox").hidden = !anyStages;
+    if (anyStages) {
+      $("stages").innerHTML = [["deep", "Deep"], ["light", "Light"], ["rem", "REM"], ["awake", "Awake"]].map(([k, label]) =>
+        `<div><dt><i style="background:var(--st-${k})"></i>${label}</dt><dd>${Math.round(st[k] / 60)}<small style="font:400 12px var(--mono);color:var(--muted);margin-left:2px">min</small></dd></div>`).join("");
+      const main = day.ring.filter((r) => r.segs.length).sort((a, b) => b.asleep - a.asleep)[0];
+      $("stageHead").textContent = main ? `Stages · ${kindOf(main.start, main.end).toLowerCase()} ${clock(main.start)}–${clock(main.end)}` : "Stages (ring)";
+      drawHypno(main);
+    }
+    drawTimeline(day, d0, d1);
+    drawWeek(by);
+    renderTuneInfo();
+  }
+  $("prevSleep").addEventListener("click", () => { const d = parseStamp(selSleepDay + " 00:00:00"); d.setDate(d.getDate() - 1); selSleepDay = dayKey(d); renderSleep(); });
+  $("nextSleep").addEventListener("click", () => { const d = parseStamp(selSleepDay + " 00:00:00"); d.setDate(d.getDate() + 1); selSleepDay = dayKey(d); renderSleep(); });
+
+  // Noon-to-noon timeline: ring sessions (by stage when available), estimated blocks, and the
+  // heart-rate line with the estimate's ceiling, so the two can be compared at a glance.
+  function drawTimeline(day, d0, d1) {
+    const box = $("timeline"); box.innerHTML = "";
+    const series = hrSeries().filter(([d]) => d >= d0 && d < d1);
+    if (!day.ring.length && !day.est.length && !series.length) { $("tlLegend").innerHTML = ""; return; }
+    const W = Math.max(280, box.clientWidth || 500), L = 72, R = 8, T = 4, RH = 16, GAP = 6, HH = 74, B = 20;
+    const yRing = T, yEst = T + RH + GAP, yHr = yEst + RH + GAP + 4, H = yHr + HH + B;
+    const t0 = d0.getTime(), t1 = d1.getTime();
+    const x = (t) => L + Math.min(1, Math.max(0, (t - t0) / (t1 - t0))) * (W - L - R);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Sleep and heart rate from noon to noon" }, box);
+    const css = getComputedStyle(document.documentElement), c = (v) => css.getPropertyValue(v).trim();
+    const label = (txt, y) => { const t = el("text", { x: L - 6, y, "text-anchor": "end" }, svg); t.textContent = txt; };
+    label("Ring", yRing + RH - 4); label("Estimate", yEst + RH - 4);
+    el("rect", { x: L, y: yRing, width: W - L - R, height: RH, rx: 3, fill: c("--grid") }, svg);
+    el("rect", { x: L, y: yEst, width: W - L - R, height: RH, rx: 3, fill: c("--grid") }, svg);
+    for (const r of day.ring) {
+      if (r.segs.length) for (const [stg, at, dur] of r.segs) {
+        const a = at.getTime(), b = a + dur * 1000;
+        el("rect", { x: x(a), y: yRing, width: Math.max(1.5, x(b) - x(a)), height: RH, fill: c(`--st-${stg}`) }, svg);
+      } else el("rect", { x: x(r.start), y: yRing, width: Math.max(2, x(r.end) - x(r.start)), height: RH, rx: 2, fill: c("--st-light") }, svg);
+    }
+    for (const e of day.est) el("rect", { x: x(e.start), y: yEst, width: Math.max(2, x(e.end) - x(e.start)), height: RH, rx: 2, fill: c("--est") }, svg);
+    // Heart-rate panel
+    const vals = series.map(([, b]) => b);
+    const lo = Math.floor((Math.min(...vals, est.ceiling ?? 200) - 5) / 10) * 10, hi = Math.ceil((Math.max(...vals, est.ceiling ?? 0) + 5) / 10) * 10;
+    const y = (v) => yHr + (1 - (v - lo) / Math.max(10, hi - lo)) * HH;
+    if (series.length) {
+      for (const v of [lo, hi]) { el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: c("--grid") }, svg); label(`${v}`, y(v) + 4); }
+      let dd = "", prev = null;
+      for (const [d, v] of series) { dd += `${prev && d - prev <= 30 * 60000 ? "L" : "M"}${x(d.getTime()).toFixed(1)},${y(v).toFixed(1)}`; prev = d; }
+      el("path", { d: dd, fill: "none", stroke: c("--accent"), "stroke-width": 1.5, "stroke-linejoin": "round" }, svg);
+      if (est.ceiling != null && est.ceiling >= lo && est.ceiling <= hi) {
+        el("line", { x1: L, x2: W - R, y1: y(est.ceiling), y2: y(est.ceiling), stroke: c("--muted"), "stroke-width": 1.5, "stroke-dasharray": "4 3" }, svg);
+      }
+    }
+    for (let h = 0; h <= 24; h += 6) {
+      const t = el("text", { x: x(t0 + h * 36e5), y: H - 5, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle" }, svg);
+      t.textContent = `${pad((12 + h) % 24)}:00`;
+    }
+    // Hover: time, heart rate and state at that moment.
+    const cross = el("line", { y1: T, y2: yHr + HH, stroke: c("--ink-2"), "stroke-dasharray": "3 3", visibility: "hidden" }, svg);
+    const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+    const inAny = (arr, t) => arr.some((r) => t >= r.start.getTime() && t < r.end.getTime());
+    svg.addEventListener("pointermove", show); svg.addEventListener("pointerdown", show);
+    svg.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; });
+    function show(ev) {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+      if (px < L) return;
+      const t = t0 + ((px - L) / (W - L - R)) * (t1 - t0);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+      let near = null; for (const s of series) if (!near || Math.abs(s[0] - t) < Math.abs(near[0] - t)) near = s;
+      const hr = near && Math.abs(near[0] - t) < 20 * 60000 ? `${near[1]} bpm` : "no HR";
+      const state = [inAny(day.ring, t) && "ring: asleep", inAny(day.est, t) && "est: asleep"].filter(Boolean).join(" · ") || "awake";
+      tip.innerHTML = `${clock(new Date(t))} · <b style="font-size:13px">${hr}</b> · ${state}`;
+      tip.hidden = false; tip.style.left = `${Math.min(Math.max(px * (r.width / W), 90), r.width - 90)}px`; tip.style.top = `${(yHr - 30) * (r.height / H)}px`;
+    }
+    const sw = (v, txt, cls = "") => `<span><i class="${cls}" style="background:${v}"></i>${txt}</span>`;
+    const staged = day.ring.some((r) => r.segs.length);
+    $("tlLegend").innerHTML = (staged
+      ? sw("var(--st-deep)", "Deep") + sw("var(--st-light)", "Light") + sw("var(--st-rem)", "REM") + sw("var(--st-awake)", "Awake")
+      : sw("var(--st-light)", "Ring sleep")) + sw("var(--est)", "Estimated sleep") + sw("var(--accent)", "Heart rate", "line")
+      + (est.ceiling != null ? `<span><i class="dash"></i>Ceiling ${est.ceiling} bpm</span>` : "");
+  }
+
+  // Hypnogram for one ring session: one row per stage (position carries the stage, colour repeats it).
   function drawHypno(n) {
     const box = $("hypno"); box.innerHTML = "";
-    if (!n.segs.length) return;
+    if (!n || !n.segs.length) return;
     const W = Math.max(280, box.clientWidth || 500), H = 112, L = 46, R = 8, T = 4, B = 20;
     const rows = [["awake", "Awake"], ["rem", "REM"], ["light", "Light"], ["deep", "Deep"]];
     const rh = (H - T - B) / rows.length;
-    const t0 = n.bed.getTime(), t1 = n.wake.getTime();
+    const t0 = n.start.getTime(), t1 = n.end.getTime();
     const x = (t) => L + ((t - t0) / Math.max(1, t1 - t0)) * (W - L - R);
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Sleep stages through the night" }, box);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Sleep stages through the session" }, box);
     const css = getComputedStyle(document.documentElement), c = (v) => css.getPropertyValue(v).trim();
     rows.forEach(([k, label], i) => {
       el("line", { x1: L, x2: W - R, y1: T + rh * (i + 0.5), y2: T + rh * (i + 0.5), stroke: c("--grid"), "stroke-width": 1 }, svg);
@@ -996,36 +1229,60 @@
     }
   }
 
-  // Last 7 nights: hours asleep, one bar per calendar night; tap a bar to open that night.
-  function drawWeek(by, keys) {
+  // Last 7 sleep days: ring vs estimate, side by side. Tap a day to open it.
+  function drawWeek(by) {
     const box = $("weekChart"); box.innerHTML = "";
-    const last = parseStamp(keys[keys.length - 1] + " 00:00:00");
-    const days = [];
+    const last = parseStamp(selSleepDay + " 00:00:00"), days = [];
     for (let i = 6; i >= 0; i--) { const d = new Date(last); d.setDate(d.getDate() - i); days.push(dayKey(d)); }
     const W = Math.max(280, box.clientWidth || 500), H = 140, L = 30, R = 8, T = 10, B = 22;
-    const maxH = Math.max(10, ...days.map((k) => by[k] ? Math.ceil(by[k].asleep / 3600) : 0));
+    const maxH = Math.max(10, ...days.map((k) => by[k] ? Math.ceil(Math.max(by[k].ringTotal, by[k].estTotal) / 3600) : 0));
     const y = (h) => T + (1 - h / maxH) * (H - T - B);
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Hours asleep over the last 7 nights" }, box);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Hours asleep per day, ring and estimate" }, box);
     const css = getComputedStyle(document.documentElement), c = (v) => css.getPropertyValue(v).trim();
     for (let h = 0; h <= maxH; h += 2) {
       el("line", { x1: L, x2: W - R, y1: y(h), y2: y(h), stroke: c("--grid"), "stroke-width": 1 }, svg);
       const t = el("text", { x: L - 6, y: y(h) + 4, "text-anchor": "end" }, svg); t.textContent = `${h}h`;
     }
-    const slot = (W - L - R) / 7, bw = Math.min(28, slot * 0.6);
+    const slot = (W - L - R) / 7, bw = Math.min(14, slot * 0.3);
+    const bar = (cx, sec, fill, k, what) => {
+      if (!sec) return;
+      const h = sec / 3600, top = y(h), r = Math.min(3, (y(0) - top) / 2);
+      const p = el("path", { d: `M${cx - bw / 2},${y(0)} V${top + r} q0,-${r} ${r},-${r} H${cx + bw / 2 - r} q${r},0 ${r},${r} V${y(0)} Z`,
+        fill, opacity: k === selSleepDay ? 1 : 0.6, style: "cursor:pointer" }, svg);
+      el("title", {}, p).textContent = `${what}: ${hm(sec)}`;
+      p.addEventListener("click", () => { selSleepDay = k; renderSleep(); });
+    };
     days.forEach((k, i) => {
       const cx = L + slot * (i + 0.5);
       const t = el("text", { x: cx, y: H - 5, "text-anchor": "middle" }, svg);
       t.textContent = parseStamp(k + " 00:00:00").toLocaleDateString([], { weekday: "short" }).slice(0, 2);
-      const n = by[k]; if (!n) return;
-      const h = n.asleep / 3600;
-      const bar = el("path", {
-        d: `M${cx - bw / 2},${y(0)} V${y(h) + 4} q0,-4 4,-4 H${cx + bw / 2 - 4} q4,0 4,4 V${y(0)} Z`,
-        fill: c("--st-light"), opacity: k === selNight ? 1 : 0.55, style: "cursor:pointer",
-      }, svg);
-      el("title", {}, bar).textContent = `${hm(n.asleep)} asleep · ${clock(n.bed)}–${clock(n.wake)}`;
-      bar.addEventListener("click", () => { selNight = k; renderSleep(); });
+      const d = by[k]; if (!d) return;
+      bar(cx - bw / 2 - 1, d.ringTotal, c("--st-light"), k, "Ring");
+      bar(cx + bw / 2 + 1, d.estTotal, c("--est"), k, "Estimate");
+    });
+    $("weekLegend").innerHTML = `<span><i style="background:var(--st-light)"></i>Ring recorded</span><span><i style="background:var(--est)"></i>Estimated</span>`;
+  }
+
+  // Estimate settings
+  const tuneFields = { tCeil: "ceiling", tOff: "offset", tMin: "minBlock", tGap: "mergeGap", tSteps: "maxSteps" };
+  function fillTune() { for (const [id, k] of Object.entries(tuneFields)) $(id).value = tune[k] ?? ""; }
+  for (const [id, k] of Object.entries(tuneFields)) {
+    $(id).addEventListener("input", () => {
+      const v = $(id).value.trim();
+      tune[k] = v === "" ? (k === "ceiling" ? null : TUNE_DEFAULT[k]) : Number(v);
+      store.set(KEY_TUNE, tune); renderSleep();
     });
   }
+  $("tReset").addEventListener("click", () => { tune = { ...TUNE_DEFAULT }; store.set(KEY_TUNE, tune); fillTune(); renderSleep(); });
+  function renderTuneInfo() {
+    const parts = [];
+    parts.push(est.base != null ? `Your baseline (lowest 10% of heart rate over the last 14 days, roughly your sleeping heart rate): ${est.base} bpm.` : "Baseline: needs at least 30 heart-rate readings.");
+    parts.push(est.ceiling != null ? `Ceiling in use: ${est.ceiling} bpm${tune.ceiling != null ? " (fixed)" : ` (baseline + ${tune.offset})`}.` : "");
+    parts.push(`Readings arrive every ~${Math.round(est.iv)} min.`);
+    parts.push(est.steps ? "Steps from the ring are used to rule out movement." : "No step data from the ring, so the estimate uses heart rate only.");
+    $("tuneInfo").textContent = parts.filter(Boolean).join(" ");
+  }
+  fillTune();
 
   // ── Other stats (only what the ring actually reported) ──────────────────
   const KINDS = [
