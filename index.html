@@ -124,10 +124,10 @@
   }
   .now .unit { font: 500 13px/1.2 var(--mono); color: var(--muted); padding-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
   .now .when { flex-basis: 100%; font-size: 13px; color: var(--ink-2); }
-  .now.live .num { color: var(--accent); }
-  .now.live .unit::after { content: " · live"; color: var(--accent); }
+  .now.measuring .num { color: var(--accent); }
+  .now.measuring .unit::after { content: " · measuring"; color: var(--accent); }
   @keyframes beat { 0%, 100% { transform: scale(1); } 15% { transform: scale(1.04); } }
-  .now.live.tick .num { animation: beat 0.5s ease-out; transform-origin: left bottom; }
+  .now.measuring.tick .num { animation: beat 0.5s ease-out; transform-origin: left bottom; }
 
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .stat { padding: 10px 0; display: grid; gap: 2px; }
@@ -187,7 +187,7 @@
 
   footer { font-size: 12px; color: var(--muted); }
   #log { font: 12px/1.4 var(--mono); color: var(--muted); white-space: pre-wrap; max-height: 180px; overflow: auto; margin: 0; }
-  @media (prefers-reduced-motion: reduce) { .now.live.tick .num { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .now.measuring.tick .num { animation: none; } }
 </style>
 </head>
 <body>
@@ -225,7 +225,7 @@
 
   <div class="actions">
     <button class="primary" id="btnSync">Sync</button>
-    <button id="btnLive" aria-pressed="false">Live heart rate</button>
+    <button id="btnMeasure">Measure now</button>
   </div>
 
   <section class="card">
@@ -291,6 +291,8 @@
     GET_INFO: 0x0200,   // payload "GC"; reply: [id u16, fw minor, fw major, battery state, battery %, ...]
     RT_BATTERY: 0x0615, // ring push: [charging, battery %]
     HEART_TEST: 0x0301, REAL_STREAM: 0x0309, RT_HR: 0x0601,
+    MEASURE: 0x032F,         // [start 1/0, type 0 = heart rate]: one-off measurement
+    MEASURE_DONE: 0x040E,    // ring: [type, 1 = ok / 2 = failed]
     HIST_HEART: 0x0506, HIST_HEART_DATA: 0x0515, HIST_BLOCK_END: 0x0580,
   };
   const ERRORS = { 0xFB: "unsupported command group", 0xFC: "unsupported command", 0xFD: "length error", 0xFE: "data error", 0xFF: "CRC error" };
@@ -448,7 +450,7 @@
 
   function onDisconnect() {
     c1 = null;
-    stopLiveTimer();
+    if (measuring) measuring.cancel = true;
     setChip("off", "Not connected");
     log("disconnected");
   }
@@ -497,10 +499,7 @@
     finally { busy = false; setButtons(); }
   }
 
-  $("btnSync").addEventListener("click", () => guarded("Sync", async () => {
-    await connect();
-    setChip("busy", "Syncing…");
-    const rows = await fetchHistory();
+  function merge(rows) {
     let added = 0, skipped = 0;
     for (const [d, bpm] of rows) {
       if (!plausible(d)) { skipped++; continue; }
@@ -512,6 +511,14 @@
     lastSync = new Date();
     const latest = latestDay(); if (latest) viewDay = latest;
     render();
+    return { added, skipped };
+  }
+
+  $("btnSync").addEventListener("click", () => guarded("Sync", async () => {
+    await connect();
+    setChip("busy", "Syncing…");
+    const rows = await fetchHistory();
+    const { added, skipped } = merge(rows);
     setChip("on", "Connected");
     const s = `${rows.length} reading${rows.length === 1 ? "" : "s"} on the ring, ${added} new.`;
     notify(skipped ? `${s} ${skipped} with an impossible date were skipped.` : s);
@@ -532,35 +539,80 @@
     }
   }));
 
-  // Live heart rate: the ring stops measuring after ~30–60 s of silence, so re-arm every 45 s.
-  let liveTimer = null, live = false;
-  function stopLiveTimer() {
-    clearInterval(liveTimer); liveTimer = null; live = false;
-    $("btnLive").classList.remove("on"); $("btnLive").setAttribute("aria-pressed", "false"); $("btnLive").textContent = "Live heart rate";
-    $("now").classList.remove("live");
-    renderNow();
-  }
+  // Measure now: one-off reading. Uses the ring's one-shot command; if this firmware rejects
+  // it, falls back to briefly running the real-time stream and stopping at a stable value.
+  let measuring = null; // { values, cancel }
+  const stableValue = (v) => {
+    const last = v.slice(-3);
+    return v.length >= 4 && Math.max(...last) - Math.min(...last) <= 3
+      ? Math.round(last.reduce((a, b) => a + b, 0) / 3) : null;
+  };
   async function arm() { await send(OP.HEART_TEST, [1]); await send(OP.REAL_STREAM, [1]); }
-  $("btnLive").addEventListener("click", () => guarded("Live heart rate", async () => {
-    if (live) {
-      try { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); } catch {}
-      stopLiveTimer();
+
+  $("btnMeasure").addEventListener("click", () => {
+    if (measuring) { measuring.cancel = true; return; }
+    guarded("Measuring", measureNow);
+  });
+
+  async function measureNow() {
+    await connect();
+    const m = measuring = { values: [], cancel: false };
+    const btn = $("btnMeasure"), t0 = Date.now();
+    btn.classList.add("on"); btn.textContent = "Cancel"; setButtons();
+    $("now").classList.add("measuring");
+    $("nowNum").textContent = "…";
+    $("nowWhen").textContent = "Measuring. Keep your hand still with the ring snug; it takes 20–40 seconds.";
+    const start = frames.length;
+    let oneShot = true, failed = false;
+    try {
+      await send(OP.MEASURE, [1, 0]);
+      const ack = await waitFor((f) => f.op === OP.MEASURE, 3000, start);
+      if (!ack || (ack.payload.length === 1 && ack.payload[0] >= 0xFB)) {
+        oneShot = false;
+        log(`one-shot measurement ${ack ? ERRORS[ack.payload[0]] : "got no reply"}; using the real-time stream instead`);
+        await arm();
+      }
+      while (!m.cancel && Date.now() - t0 < 60000) {
+        const done = frames.slice(start).find((f) => f.op === OP.MEASURE_DONE);
+        if (done) { failed = done.payload[1] === 2; break; }
+        if (!oneShot && stableValue(m.values)) break;
+        btn.textContent = `Cancel · ${Math.round((Date.now() - t0) / 1000)} s`;
+        await sleep(250);
+      }
+    } finally {
+      try {
+        if (oneShot) await send(OP.MEASURE, [0, 0]);
+        else { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); }
+      } catch {}
+      measuring = null;
+      btn.classList.remove("on"); btn.textContent = "Measure now";
+      $("now").classList.remove("measuring");
+      renderNow();
+    }
+    if (m.cancel) {
+      if (device?.gatt.connected) notify("Measurement cancelled.");
       return;
     }
-    await connect();
-    await arm();
-    live = true;
-    $("btnLive").classList.add("on"); $("btnLive").setAttribute("aria-pressed", "true"); $("btnLive").textContent = "Stop live";
-    $("now").classList.add("live");
-    $("nowNum").textContent = "…";
-    $("nowWhen").textContent = "Measuring. Keep your hand still; the first value takes about 10 seconds.";
-    liveTimer = setInterval(() => { if (c1) arm().catch((e) => log("re-arm failed: " + e.message)); }, 45000);
-  }));
+    if (failed) throw new Error("the ring couldn't get a clean reading. Make sure it's snug on your finger, keep still, and try again");
+
+    // Pull history: if the ring stored the measurement itself, use its record; otherwise save ours.
+    const at = new Date();
+    const live = stableValue(m.values) ?? m.values.filter(Boolean).at(-1) ?? null;
+    const rows = await fetchHistory();
+    merge(rows);
+    const ringRec = rows.filter(([d]) => Math.abs(d - at) < 3 * 60000 && d >= t0 - 60000).at(-1);
+    const bpm = ringRec ? ringRec[1] : live;
+    if (bpm == null) throw new Error("no heart rate came through. Make sure the ring is snug on your finger, keep still, and try again");
+    if (!ringRec) { readings.set(stamp(at), bpm); save(); render(); }
+    $("nowNum").textContent = bpm;
+    notify(`Measured ${bpm} bpm at ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. `
+      + (ringRec ? "The ring stored it too, so it's in your history." : "Saved to your history on this phone."));
+  }
   function onLiveBpm(bpm) {
-    if (!live || !bpm) return;
+    if (!measuring || !bpm) return;
+    measuring.values.push(bpm);
     const now = $("now");
     $("nowNum").textContent = bpm;
-    $("nowWhen").textContent = `Live from the ring · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
     now.classList.remove("tick"); void now.offsetWidth; now.classList.add("tick");
   }
 
@@ -592,7 +644,8 @@
   });
 
   function setButtons() {
-    for (const id of ["btnSync", "btnLive", "btnInterval"]) $(id).disabled = busy || !navigator.bluetooth;
+    for (const id of ["btnSync", "btnMeasure", "btnInterval"]) $(id).disabled = busy || !navigator.bluetooth;
+    if (measuring) $("btnMeasure").disabled = false;
   }
 
   // ── Data views ──────────────────────────────────────────────────────────
@@ -625,7 +678,7 @@
   }
 
   function renderNow() {
-    if (live) return;
+    if (measuring) return;
     const all = [...source()].sort((a, b) => a[0] < b[0] ? -1 : 1);
     if (!all.length) {
       $("nowNum").textContent = "––";
