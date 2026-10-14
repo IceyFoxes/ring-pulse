@@ -210,6 +210,11 @@
   .tune label { font-size: 14px; color: var(--ink-2); }
   .tune input { font: 500 15px var(--mono); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px; width: 100%; min-height: 40px; }
   .tune input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .feats { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 12px; font-size: 14px; }
+  .feats li { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+  .feats li b { font: 600 11px/1 var(--body); text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 5px; border-radius: 4px; min-width: 2.6em; text-align: center; }
+  .feats li b.yes { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+  .feats li b.no { color: var(--muted); background: var(--grid); }
   .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
   .tile dt { font: 500 11px/1.2 var(--body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
@@ -346,6 +351,14 @@
     </div>
     <dl class="tiles" id="tiles"></dl>
     <p class="hint" id="supportLine"></p>
+    <div id="featBox" hidden>
+      <span class="subhead">What the ring says it supports</span>
+      <ul class="feats" id="feats"></ul>
+      <details>
+        <summary>All features the ring reports</summary>
+        <p class="hint" id="featAll"></p>
+      </details>
+    </div>
   </section>
 
   <section class="card">
@@ -391,7 +404,8 @@
   const YC_C3 = "be940003-7333-be46-b7ae-689e71722bd5"; // indicate
   const OP = {
     TIME_SYNC: 0x0100, SET_HEART_MONITOR: 0x010C,
-    GET_INFO: 0x0200,   // payload "GC"; reply: [id u16, fw minor, fw major, battery state, battery %, ...]
+    GET_INFO: 0x0200,
+    GET_FEATURES: 0x0201, // payload "GF"; reply = feature bitmap (bit set = supported)   // payload "GC"; reply: [id u16, fw minor, fw major, battery state, battery %, ...]
     RT_BATTERY: 0x0615, // ring push: [charging, battery %]
     HEART_TEST: 0x0301, REAL_STREAM: 0x0309, RT_HR: 0x0601,
     MEASURE: 0x032F,         // [start 1/0, type 0 = heart rate]: one-off measurement
@@ -424,6 +438,43 @@
   const KEY = "ringpulse.readings.v1";
   const KEY_IV = "ringpulse.interval";
   const KEY_BATT = "ringpulse.battery"; // {pct, fw, at}
+  const KEY_FEAT = "ringpulse.features.v1"; // {bits: [...], at}
+  // Feature bitmap layout "byte.bit:NAME", from the vendor SDK (saveDeviceSupportFunctionData).
+  const FEATURES = (
+    "0.7:STEPCOUNT,0.6:SLEEP,0.5:REALDATA,0.4:FIRMWAREUPDATE,0.3:HEARTRATE,0.2:INFORMATION,," +
+    "0.1:MANYLANGUAGE,1.7:HEARTALARM,1.6:BLOODALARM,1.5:ECGREALUPLOAD,1.4:ECGHISTORYUPLOAD,," +
+    "1.3:BLOODOXYGEN,1.2:RESPIRATORYRATE,1.1:HRV,3.7:CUSTOM,3.6:MEETING,3.5:PARTY,3.4:APPOINT,," +
+    "3.3:TAKEPILLS,3.2:TAKEEXERCISE,3.1:TAKESLEEP,4.7:CALLPHONE,4.6:MESSAGE,4.5:EMAIL,4.4:QQ,4.3:WECHAT,," +
+    "4.2:SINA,4.1:FACEBOOK,5.7:WHATSAPP,5.6:MESSENGER,5.5:INSTAGRAM,5.4:LINKEDIN,5.3:LINE,5.2:SNAPCHAT,," +
+    "5.1:SKYPE,6.7:LONGSITTING,6.6:ANTILOST,6.5:FINDPHONE,6.4:FINDDEVICE,6.3:FACTORYSETTING,," +
+    "6.2:BLOODLEVEL,6.1:NOTITOGGLE,7.7:SKINCOLOR,7.6:WECHATSPORT,7.5:SEARCHAROUND,7.4:TODAYWEATHER,," +
+    "7.3:TOMORROWWEATHER,7.2:ECGDIAGNOSIS,7.1:PHONESUPPORT,8.7:TEMPALARM,8.6:TEMPAXILLARYTEST,8.5:CVRR,," +
+    "8.4:BLOODPRESSURECALIBRATION,8.3:ECGRIGHTELECTRODE,8.2:THEME,8.1:MUSIC,9.7:INACCURATEECG,," +
+    "9.6:CONTACTS,9.5:DIAL,9.4:FEMALEPHYSIOLOGICALCYCLE,9.3:SHAKETAKEPHOTO,9.2:MANUALTAKEPHOTO,," +
+    "9.1:SETINFO,10.7:REALTIMEMONITORINGMODE,10.6:INDOORWALKING,10.5:OUTDOORWALKING,10.4:INDOORRUNING,," +
+    "10.3:OUTDOORRUNING,10.2:PINGPONG,10.1:FOOTBALL,11.7:RUNNING,11.6:FITNESS,11.5:RIDING,," +
+    "11.4:ROPESKIPPING,11.3:BASKETBALL,11.2:SWIMMING,11.1:WALKING,14.7:ONFOOT,14.6:YOGA,," +
+    "14.5:WEIGHTTRAINING,14.4:JUMPING,14.3:SITUPS,14.2:ROWINGMACHINE,14.1:STEPPER,15.1:TESTHEART,," +
+    "15.2:TESTBLOOD,15.3:TESTSPO2,15.4:TESTTEMP,15.5:TESTRESPIRATIONRATE,15.6:KINDSINFORMATIONPUSH,," +
+    "15.7:CUSTOMDIAL,16.1:SOS,16.2:BLOODOXYGENALARM,16.3:UPLOADINFLATEBLOOD,16.4:VIBERNOTIFY,," +
+    "16.5:OTHRENOTIFY,16.6:FLIPDIALIMAGE,16.7:WATCHSCREENBRIGHTNESS,17.1:SETSCREENTIME,17.3:BLOODSUGAR,," +
+    "17.4:PAUSEEXERCISE,17.5:DRINKWATERREMINDER,17.6:BUSINESSCARD,17.7:URICACIDMEASUREMENT,18.1:KAYAK,," +
+    "18.2:ROLLERSKATING,18.3:TENNIS,18.4:GOLF,18.5:ELLIPTICALMACHINE,18.6:DANCE,18.7:ROCKCLIMBING,," +
+    "19.1:OTHERSPORTS,20.1:ALIIOT,20.2:CREATEBOND,20.3:RESPIRATORYRATEALARM,20.4:IMPRECISEBLOODFAT,," +
+    "20.5:INDEPENDENT_AUTOMATIC_TIME_MEASUREMENT,20.6:RECORDING_FILE,20.7:PHYSIOTHERAPY,," +
+    "21.1:TIKTOKNOTIFY,21.2:KAKAOTALKNOTIFY,22.1:DEVICE_SPEC,22.2:LOCAL_SPORT_DATA,22.3:LOGO,," +
+    "22.4:MOTION_DELAY_DISCONNECT,22.5:BATTERY_INFO_UPLOAD,22.6:PRESSURE,22.7:MAXIMAL_OXYGEN_INTAKE,," +
+    "23.1:BLOODSUGAR_MEASUREMENT,23.2:PRESSURE_MEASUREMENT,23.3:OXYGENINTAKE_MEASUREMENT,," +
+    "23.4:BLOOD_FAT_MEASUREMENT,23.5:URIC_ACID_MEASUREMENT,23.6:START_PRAYER,24.1:PRECISION_LIPIDS,," +
+    "24.2:PRECISION_URIC_ACID,24.3:PRECISION_BLOOD_KETONE,25.4:SEDENTARY_REPORT,," +
+    "25.5:HENGAI_BLOODPRESSURE,25.6:HENGAI_EMOTION_PRESSURE,25.7:MF_BLOOD_OXYGEN,26.1:MF_HEART_RATE,," +
+    "26.2:MF_BLOOD_PRESSURE_ACCURATE,26.3:MF_ECG,26.4:MF_HRV,26.5:MF_TEMPERATURE,26.6:4G_BINDING"
+  ).split(",").map((x) => { const [k, n] = x.split(":"); const [b, i] = k.split(".").map(Number); return [b, i, n]; });
+  const HEALTH_FEATURES = [
+    ["STEPCOUNT", "Steps"], ["SLEEP", "Sleep"], ["HEARTRATE", "Heart rate"], ["BLOODOXYGEN", "Blood oxygen"],
+    ["HRV", "HRV"], ["RESPIRATORYRATE", "Breathing rate"], ["TESTTEMP", "Temperature"], ["PRESSURE", "Stress"],
+    ["TESTBLOOD", "Blood pressure"], ["BLOODSUGAR", "Blood sugar"],
+  ];
   const store = {
     get(k, fallback) { try { const v = localStorage.getItem(k); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -542,6 +593,11 @@
     const info = await waitFor((f) => f.op === OP.GET_INFO, 3000, start);
     if (info && info.payload.length >= 6) setBattery(info.payload[5], `${info.payload[3]}.${pad(info.payload[2])}`);
     else log("ring did not report battery");
+    const fstart = frames.length;
+    await send(OP.GET_FEATURES, [0x47, 0x46]);
+    const feat = await waitFor((f) => f.op === OP.GET_FEATURES, 3000, fstart);
+    if (feat && feat.payload.length >= 2) store.set(KEY_FEAT, { bits: feat.payload, at: Date.now() });
+    else log("ring did not report its feature list");
   }
   function setBattery(pct, fw) {
     if (pct > 100) return;
@@ -1315,7 +1371,16 @@
         no.length && `Not available on this ring: ${no.join(", ")}.`, err.length && `Couldn't read: ${err.join(", ")} (see Bluetooth log).`].filter(Boolean).join(" ");
     }
     $("supportLine").textContent = line;
-    $("otherCard").hidden = !tiles.length && !line;
+    const f = store.get(KEY_FEAT, null);
+    let hasFeat = false;
+    if (f && f.bits) {
+      const on = new Set(FEATURES.filter(([b, i]) => b < f.bits.length && (f.bits[b] >> i) & 1).map(([, , n]) => n));
+      $("feats").innerHTML = HEALTH_FEATURES.map(([k, label]) => `<li><b class="${on.has(k) ? "yes" : "no"}">${on.has(k) ? "Yes" : "No"}</b>${label}</li>`).join("");
+      $("featAll").textContent = [...on].map((n) => n.replace(/^_/, "").replace(/_/g, " ").toLowerCase()).sort().join(", ") || "None";
+      hasFeat = true;
+    }
+    $("featBox").hidden = !hasFeat;
+    $("otherCard").hidden = !tiles.length && !line && !hasFeat;
   }
 
   // ── Chart (single series: one hue, no legend; crosshair + tooltip) ──────
