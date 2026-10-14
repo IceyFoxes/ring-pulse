@@ -469,7 +469,7 @@
     "24.2:PRECISION_URIC_ACID,24.3:PRECISION_BLOOD_KETONE,25.4:SEDENTARY_REPORT,," +
     "25.5:HENGAI_BLOODPRESSURE,25.6:HENGAI_EMOTION_PRESSURE,25.7:MF_BLOOD_OXYGEN,26.1:MF_HEART_RATE,," +
     "26.2:MF_BLOOD_PRESSURE_ACCURATE,26.3:MF_ECG,26.4:MF_HRV,26.5:MF_TEMPERATURE,26.6:4G_BINDING"
-  ).split(",").map((x) => { const [k, n] = x.split(":"); const [b, i] = k.split(".").map(Number); return [b, i, n]; });
+  ).split(",").filter(Boolean).map((x) => { const [k, n] = x.split(":"); const [b, i] = k.split(".").map(Number); return [b, i, n]; });
   const HEALTH_FEATURES = [
     ["STEPCOUNT", "Steps"], ["SLEEP", "Sleep"], ["HEARTRATE", "Heart rate"], ["BLOODOXYGEN", "Blood oxygen"],
     ["HRV", "HRV"], ["RESPIRATORYRATE", "Breathing rate"], ["TESTTEMP", "Temperature"], ["PRESSURE", "Stress"],
