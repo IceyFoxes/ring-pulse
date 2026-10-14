@@ -370,7 +370,10 @@
       }
     };
   }
-  function waitFor(pred, ms) {
+  // Replies often land while send() is still pausing, so look at everything since `since` first.
+  function waitFor(pred, ms, since) {
+    const already = frames.slice(since).find(pred);
+    if (already) return Promise.resolve(already);
     return new Promise((resolve) => {
       const w = { pred, resolve };
       waiters.push(w);
@@ -422,7 +425,7 @@
     log("connected, clock synced");
     const start = frames.length;
     await send(OP.GET_INFO, [0x47, 0x43]);
-    const info = frames.slice(start).find((f) => f.op === OP.GET_INFO) || await waitFor((f) => f.op === OP.GET_INFO, 3000);
+    const info = await waitFor((f) => f.op === OP.GET_INFO, 3000, start);
     if (info && info.payload.length >= 6) setBattery(info.payload[5], `${info.payload[3]}.${pad(info.payload[2])}`);
     else log("ring did not report battery");
   }
@@ -453,10 +456,12 @@
   async function fetchHistory() {
     const start = frames.length;
     await send(OP.HIST_HEART);
-    const head = await waitFor((f) => f.op === OP.HIST_HEART, 5000);
-    const count = head && head.payload.length >= 2 ? head.payload[0] | (head.payload[1] << 8) : 0;
-    if (!head || count === 0) return [];
-    const end = frames.slice(start).find((f) => f.op === OP.HIST_BLOCK_END) || await waitFor((f) => f.op === OP.HIST_BLOCK_END, 15000);
+    const head = await waitFor((f) => f.op === OP.HIST_HEART, 5000, start);
+    if (!head) throw new Error("The ring didn't answer the history request. Try Sync again.");
+    const count = head.payload.length >= 2 ? head.payload[0] | (head.payload[1] << 8) : 0;
+    log(`history: ring reports ${count} stored reading${count === 1 ? "" : "s"}`);
+    if (count === 0) return [];
+    const end = await waitFor((f) => f.op === OP.HIST_BLOCK_END, 15000, start);
     if (!end) throw new Error("The ring stopped sending history partway. Try Sync again.");
     const data = frames.slice(start).filter((f) => f.op === OP.HIST_HEART_DATA).flatMap((f) => f.payload);
     const nbytes = end.payload[2] | (end.payload[3] << 8);
@@ -517,7 +522,7 @@
     await connect();
     const start = frames.length;
     await send(OP.SET_HEART_MONITOR, [1, minutes]);
-    const ack = frames.slice(start).find((f) => f.op === OP.SET_HEART_MONITOR) || await waitFor((f) => f.op === OP.SET_HEART_MONITOR, 3000);
+    const ack = await waitFor((f) => f.op === OP.SET_HEART_MONITOR, 3000, start);
     if (ack && ack.payload[0] === 0) {
       store.set(KEY_IV, minutes);
       notify(`The ring will now measure every ${minutes} minute${minutes === 1 ? "" : "s"}.`);
