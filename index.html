@@ -98,6 +98,58 @@
     gap: 20px;
   }
 
+  /* App shell: top bar + sidebar (drawer on phones) */
+  .topbar {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+    display: flex; align-items: center; gap: 10px;
+    padding-inline: 12px; padding-block: 10px;
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .topbar h1 { flex: 1; min-width: 0; margin: 0; font: 600 22px/1.1 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .iconbtn { width: 42px; min-height: 42px; padding: 0; display: inline-grid; place-content: center; gap: 4px; border-radius: 10px; }
+  .iconbtn span { display: block; width: 18px; height: 2px; border-radius: 1px; background: var(--ink); }
+  button.small { min-height: 38px; padding: 8px 14px; font-size: 14px; }
+  button.wide { width: 100%; }
+  .layout { display: block; }
+  .sidebar {
+    position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(280px, 82vw);
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 14px 16px; overflow-y: auto;
+    background: var(--surface); border-right: 1px solid var(--line);
+    transform: translateX(-102%); transition: transform 0.2s ease; display: grid; align-content: start; gap: 14px;
+  }
+  .sidebar.open { transform: none; box-shadow: 0 10px 40px rgb(0 0 0 / 0.25); }
+  .backdrop { position: fixed; inset: 0; z-index: 30; background: rgb(10 15 20 / 0.45); }
+  .sidebar .brand { display: flex; align-items: baseline; gap: 8px; }
+  .sidebar .brand strong { font: 600 22px/1 var(--display); }
+  .sidebar .meta { margin-top: 0; flex-wrap: wrap; }
+  .navlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .navlist button {
+    width: 100%; text-align: left; border: 0; background: none; border-radius: 8px;
+    padding: 11px 12px; min-height: 44px; font: 500 15px/1.2 var(--body); color: var(--ink-2);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .navlist button:hover { background: var(--grid); }
+  .navlist button[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .navlist button small { font: 500 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .navlist button[aria-current="page"] small { color: inherit; }
+  .navlist .sep { height: 1px; background: var(--line); margin: 6px 4px; }
+  .view { display: grid; gap: 20px; }
+  @media (min-width: 900px) {
+    .topbar { padding-left: 252px; }
+    .iconbtn { display: none; }
+    .sidebar { transform: none; width: 236px; box-shadow: none; z-index: 25; }
+    .layout { padding-left: 236px; }
+    .backdrop { display: none; }
+  }
+  @media (max-width: 420px) {
+    .topbar .chip { font-size: 0; padding: 7px; gap: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
+
+  /* Generic metric pages */
+  .metric { display: grid; gap: 20px; }
+  .caveat { font-size: 13px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px; padding: 10px 12px; margin: 0; }
+
   /* Header */
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
@@ -215,12 +267,6 @@
   .feats li b { font: 600 11px/1 var(--body); text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 5px; border-radius: 4px; min-width: 2.6em; text-align: center; }
   .feats li b.yes { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
   .feats li b.no { color: var(--muted); background: var(--grid); }
-  .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
-  .tile dt { font: 500 11px/1.2 var(--body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-  .tile dd { margin: 0; font: 600 26px/1.1 var(--display); font-variant-numeric: tabular-nums; }
-  .tile dd small { font: 400 12px var(--mono); color: var(--muted); margin-left: 3px; }
-  .tile .sub { font-size: 12px; color: var(--muted); }
 
   /* Settings */
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -244,154 +290,166 @@
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="brand">
-      <h1>Ring Pulse</h1>
-      <span class="dev" id="devName">RW009</span>
+<div class="topbar">
+  <button class="iconbtn" id="menuBtn" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><span></span><span></span><span></span></button>
+  <h1 id="viewTitle">Heart rate</h1>
+  <span class="chip" id="chip" data-state="off">Not connected</span>
+  <button class="primary small" id="btnSync">Sync</button>
+</div>
+<div class="layout">
+  <nav class="sidebar" id="sidebar" aria-label="Sections">
+    <div class="brand"><strong>Ring Pulse</strong><span class="dev" id="devName">RW009</span></div>
+    <div class="meta" id="meta">
+      <span class="batt" id="batt" data-level="none" aria-hidden="true"><i id="battFill"></i></span>
+      <span id="battText">Battery unknown · sync to check</span>
     </div>
-    <span class="chip" id="chip" data-state="off">Not connected</span>
-  </header>
 
-  <div class="meta" id="meta">
-    <span class="batt" id="batt" data-level="none" aria-hidden="true"><i id="battFill"></i></span>
-    <span id="battText">Battery unknown · sync to check</span>
-  </div>
-
-  <div class="notice err" id="noBle" hidden>
-    <strong>Bluetooth isn't available in this browser.</strong> Open this page in Chrome on Android (or Chrome/Edge on a computer). Firefox and iPhone browsers don't support Web Bluetooth.
-  </div>
-  <div class="notice" id="msg" hidden></div>
-
-  <section class="hero" aria-live="polite">
-    <div class="now" id="now">
-      <span class="num" id="nowNum">–</span>
-      <span class="unit">bpm</span>
-      <span class="when" id="nowWhen">No readings yet. Tap Sync to pull them from the ring.</span>
+    <ul class="navlist" id="navlist"></ul>
+  </nav>
+  <div class="backdrop" id="backdrop" hidden></div>
+  <main class="wrap">
+    <div class="notice err" id="noBle" hidden>
+      <strong>Bluetooth isn't available in this browser.</strong> Open this page in Chrome on Android (or Chrome/Edge on a computer). Firefox and iPhone browsers don't support Web Bluetooth.
     </div>
-    <dl class="stats">
-      <div class="stat"><dt>Low</dt><dd id="sMin">–</dd></div>
-      <div class="stat"><dt>Average</dt><dd id="sAvg">–</dd></div>
-      <div class="stat"><dt>High</dt><dd id="sMax">–</dd></div>
-    </dl>
-  </section>
+    <div class="notice" id="msg" hidden></div>
 
-  <div class="actions">
-    <button class="primary" id="btnSync">Sync</button>
-    <button id="btnMeasure">Measure now</button>
-  </div>
+    <section class="view" data-view="heart">
+      <section class="hero" aria-live="polite">
+        <div class="now" id="now">
+          <span class="num" id="nowNum">–</span>
+          <span class="unit">bpm</span>
+          <span class="when" id="nowWhen">No readings yet. Tap Sync to pull them from the ring.</span>
+        </div>
+        <dl class="stats">
+          <div class="stat"><dt>Low</dt><dd id="sMin">–</dd></div>
+          <div class="stat"><dt>Average</dt><dd id="sAvg">–</dd></div>
+          <div class="stat"><dt>High</dt><dd id="sMax">–</dd></div>
+        </dl>
+      </section>
 
-  <section class="card" id="sleepCard">
-    <div class="dayhead">
-      <h2>Sleep</h2>
-      <div class="daynav">
-        <button id="prevSleep" aria-label="Previous sleep day">‹</button>
-        <span class="day" id="sleepDayLabel">Today</span>
-        <button id="nextSleep" aria-label="Next sleep day">›</button>
-      </div>
-    </div>
-    <p class="hint" id="sleepSpan">Noon to noon</p>
-    <dl class="stats sleepstats">
-      <div class="stat"><dt>Ring recorded</dt><dd id="ringTotal">–</dd></div>
-      <div class="stat"><dt>Estimated</dt><dd id="estTotal">–</dd></div>
-    </dl>
-    <div class="chart" id="timeline"></div>
-    <div class="legend" id="tlLegend"></div>
-    <p class="hint" id="calib" hidden></p>
-    <div class="tablewrap"><table class="periods"><thead><tr><th>Sleep</th><th>Time</th><th>Length</th><th>Source</th></tr></thead><tbody id="periodRows"></tbody></table></div>
-    <p class="empty" id="sleepEmpty" hidden></p>
-    <div id="stageBox" hidden>
-      <span class="subhead" id="stageHead">Stages (ring)</span>
-      <dl class="stages" id="stages"></dl>
-      <div class="chart" id="hypno"></div>
-    </div>
-    <span class="subhead">Last 7 days</span>
-    <div class="chart" id="weekChart"></div>
-    <div class="legend" id="weekLegend"></div>
-    <details>
-      <summary>Estimate settings</summary>
-      <div class="tune">
-        <label for="tCeil">Asleep when heart rate is at or below (bpm)</label>
-        <input type="number" id="tCeil" inputmode="numeric" min="30" max="120" placeholder="auto">
-        <label for="tOff">Auto: this many bpm above your baseline</label>
-        <input type="number" id="tOff" inputmode="numeric" min="0" max="30">
-        <label for="tMin">Shortest sleep block (min)</label>
-        <input type="number" id="tMin" inputmode="numeric" min="10" max="240">
-        <label for="tGap">Bridge awake gaps up to (min)</label>
-        <input type="number" id="tGap" inputmode="numeric" min="0" max="120">
-        <label for="tSteps">Max steps per 10 min while asleep</label>
-        <input type="number" id="tSteps" inputmode="numeric" min="0" max="500">
-      </div>
-      <p class="hint" id="tuneInfo"></p>
-      <button id="tReset">Reset to defaults</button>
-    </details>
-  </section>
+      <button class="wide" id="btnMeasure">Measure now</button>
+      <section class="card">
+        <div class="dayhead">
+          <h2>Heart rate</h2>
+          <div class="daynav">
+            <button id="prevDay" aria-label="Previous day">‹</button>
+            <span class="day" id="dayLabel">Today</span>
+            <button id="nextDay" aria-label="Next day">›</button>
+          </div>
+        </div>
+        <span class="example" id="exampleTag" hidden>Example data · sync to replace</span>
+        <div class="chart" id="chart"></div>
+        <details>
+          <summary id="tableSummary">Readings</summary>
+          <div class="tablewrap"><table><thead><tr><th>Time</th><th>BPM</th><th>Gap</th></tr></thead><tbody id="tbody"></tbody></table></div>
+        </details>
+      </section>
 
-  <section class="card">
-    <div class="dayhead">
-      <h2>Heart rate</h2>
-      <div class="daynav">
-        <button id="prevDay" aria-label="Previous day">‹</button>
-        <span class="day" id="dayLabel">Today</span>
-        <button id="nextDay" aria-label="Next day">›</button>
-      </div>
-    </div>
-    <span class="example" id="exampleTag" hidden>Example data · sync to replace</span>
-    <div class="chart" id="chart"></div>
-    <details>
-      <summary id="tableSummary">Readings</summary>
-      <div class="tablewrap"><table><thead><tr><th>Time</th><th>BPM</th><th>Gap</th></tr></thead><tbody id="tbody"></tbody></table></div>
-    </details>
-  </section>
+      <section class="card">
+        <h2>Measurement interval</h2>
+        <div class="row">
+          <label for="interval">Measure every</label>
+          <select id="interval">
+            <option value="1">1 minute</option>
+            <option value="5" selected>5 minutes</option>
+            <option value="10">10 minutes</option>
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60">60 minutes</option>
+          </select>
+          <button id="btnInterval">Apply</button>
+        </div>
+        <p class="hint">Shorter intervals drain the battery faster. The ring can't report its current setting, so this shows what was last applied from this phone.</p>
+      </section>
 
-  <section class="card" id="otherCard" hidden>
-    <div class="dayhead">
-      <h2>Other stats</h2>
-      <span class="subhead" id="otherDay">Today</span>
-    </div>
-    <dl class="tiles" id="tiles"></dl>
-    <p class="hint" id="supportLine"></p>
-    <div id="featBox" hidden>
-      <span class="subhead">What the ring says it supports</span>
-      <ul class="feats" id="feats"></ul>
-      <details>
-        <summary>All features the ring reports</summary>
-        <p class="hint" id="featAll"></p>
-      </details>
-    </div>
-  </section>
+    </section>
 
-  <section class="card">
-    <h2>Measurement interval</h2>
-    <div class="row">
-      <label for="interval">Measure every</label>
-      <select id="interval">
-        <option value="1">1 minute</option>
-        <option value="5" selected>5 minutes</option>
-        <option value="10">10 minutes</option>
-        <option value="15">15 minutes</option>
-        <option value="30">30 minutes</option>
-        <option value="60">60 minutes</option>
-      </select>
-      <button id="btnInterval">Apply</button>
-    </div>
-    <p class="hint">Shorter intervals drain the battery faster. The ring can't report its current setting, so this shows what was last applied from this phone.</p>
-  </section>
+    <section class="view" data-view="sleep" hidden>
+      <section class="card" id="sleepCard">
+        <div class="dayhead">
+          <h2>Sleep</h2>
+          <div class="daynav">
+            <button id="prevSleep" aria-label="Previous sleep day">‹</button>
+            <span class="day" id="sleepDayLabel">Today</span>
+            <button id="nextSleep" aria-label="Next sleep day">›</button>
+          </div>
+        </div>
+        <p class="hint" id="sleepSpan">Noon to noon</p>
+        <dl class="stats sleepstats">
+          <div class="stat"><dt>Ring recorded</dt><dd id="ringTotal">–</dd></div>
+          <div class="stat"><dt>Estimated</dt><dd id="estTotal">–</dd></div>
+        </dl>
+        <div class="chart" id="timeline"></div>
+        <div class="legend" id="tlLegend"></div>
+        <p class="hint" id="calib" hidden></p>
+        <div class="tablewrap"><table class="periods"><thead><tr><th>Sleep</th><th>Time</th><th>Length</th><th>Source</th></tr></thead><tbody id="periodRows"></tbody></table></div>
+        <p class="empty" id="sleepEmpty" hidden></p>
+        <div id="stageBox" hidden>
+          <span class="subhead" id="stageHead">Stages (ring)</span>
+          <dl class="stages" id="stages"></dl>
+          <div class="chart" id="hypno"></div>
+        </div>
+        <span class="subhead">Last 7 days</span>
+        <div class="chart" id="weekChart"></div>
+        <div class="legend" id="weekLegend"></div>
+        <details>
+          <summary>Estimate settings</summary>
+          <div class="tune">
+            <label for="tCeil">Asleep when heart rate is at or below (bpm)</label>
+            <input type="number" id="tCeil" inputmode="numeric" min="30" max="120" placeholder="auto">
+            <label for="tOff">Auto: this many bpm above your baseline</label>
+            <input type="number" id="tOff" inputmode="numeric" min="0" max="30">
+            <label for="tMin">Shortest sleep block (min)</label>
+            <input type="number" id="tMin" inputmode="numeric" min="10" max="240">
+            <label for="tGap">Bridge awake gaps up to (min)</label>
+            <input type="number" id="tGap" inputmode="numeric" min="0" max="120">
+            <label for="tSteps">Max steps per 10 min while asleep</label>
+            <input type="number" id="tSteps" inputmode="numeric" min="0" max="500">
+          </div>
+          <p class="hint" id="tuneInfo"></p>
+          <button id="tReset">Reset to defaults</button>
+        </details>
+      </section>
 
-  <section class="card">
-    <h2>Your data</h2>
-    <div class="actions">
-      <button id="btnExport">Export CSV</button>
-      <label class="filebtn">Import CSV<input type="file" id="fileImport" accept=".csv,text/csv"></label>
-    </div>
-    <p class="hint">Heart rate, sleep and other stats are kept in this browser on this phone. Export saves them all in one CSV. Import also accepts <code>heart_history.csv</code> from the PC script.</p>
-    <details>
-      <summary>Bluetooth log</summary>
-      <pre id="log"></pre>
-    </details>
-  </section>
+    </section>
 
-  <footer>Talks to the ring directly over Bluetooth. Nothing is uploaded anywhere. Close the PC script first; the ring accepts one connection at a time.</footer>
+      <section class="view" data-view="steps" hidden><div class="metric" id="m-steps"></div></section>
+      <section class="view" data-view="spo2" hidden><div class="metric" id="m-spo2"></div></section>
+      <section class="view" data-view="hrv" hidden><div class="metric" id="m-hrv"></div></section>
+      <section class="view" data-view="stress" hidden><div class="metric" id="m-stress"></div></section>
+      <section class="view" data-view="bp" hidden><div class="metric" id="m-bp"></div></section>
+      <section class="view" data-view="sugar" hidden><div class="metric" id="m-sugar"></div></section>
+
+    <section class="view" data-view="ring" hidden>
+      <section class="card" id="otherCard">
+        <h2>What the ring records</h2>
+        <p class="hint" id="supportLine"></p>
+        <div id="featBox" hidden>
+          <span class="subhead">What the ring says it supports</span>
+          <ul class="feats" id="feats"></ul>
+          <details>
+            <summary>All features the ring reports</summary>
+            <p class="hint" id="featAll"></p>
+          </details>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Your data</h2>
+        <div class="actions">
+          <button id="btnExport">Export CSV</button>
+          <label class="filebtn">Import CSV<input type="file" id="fileImport" accept=".csv,text/csv"></label>
+        </div>
+        <p class="hint">Heart rate, sleep and other stats are kept in this browser on this phone. Export saves them all in one CSV. Import also accepts <code>heart_history.csv</code> from the PC script.</p>
+        <details>
+          <summary>Bluetooth log</summary>
+          <pre id="log"></pre>
+        </details>
+      </section>
+
+      <footer>Talks to the ring directly over Bluetooth. Nothing is uploaded anywhere. Close the PC script first; the ring accepts one connection at a time.</footer>
+    </section>
+  </main>
 </div>
 
 <script>
@@ -413,6 +471,9 @@
     HIST_HEART: 0x0506, HIST_BLOCK_END: 0x0580,
     // Other stored histories (request op; the ring answers with data frames in group 0x05).
     HIST_SPORT: 0x0502, HIST_SLEEP: 0x0504, HIST_ALL: 0x0509, HIST_SPO2: 0x051A, HIST_TEMP: 0x051E,
+    HIST_BP: 0x0508, HIST_MONITOR: 0x052B, HIST_COMPREHENSIVE: 0x052F, HIST_BODY: 0x0533,
+    SET_SPO2_MONITOR: 0x0126,  // [on, interval min]
+    SET_BP_MONITOR: 0x011C,    // [on, interval min]
   };
   const ERRORS = { 0xFB: "unsupported command group", 0xFC: "unsupported command", 0xFD: "length error", 0xFE: "data error", 0xFF: "CRC error" };
 
@@ -698,13 +759,15 @@
     const out = [];
     for (let i = 0; i + 20 <= d.length; i += 20) {
       out.push({ at: ringTime(d, i), steps: u16(d, i + 4), spo2: d[i + 9], resp: d[i + 10], hrv: d[i + 11],
-        temp: d[i + 13] ? parseFloat(`${d[i + 13]}.${d[i + 14]}`) : 0 });
+        temp: d[i + 13] ? parseFloat(`${d[i + 13]}.${d[i + 14]}`) : 0,
+        sbp: d[i + 7], dbp: d[i + 8], sugar: d[i + 17] > 30 ? d[i + 17] / 10 : d[i + 17] });
     }
     return out;
   }
   const parseSpo2 = (d) => { const o = []; for (let i = 0; i + 6 <= d.length; i += 6) o.push({ at: ringTime(d, i), spo2: d[i + 5] }); return o; };
   const parseTemp = (d) => { const o = []; for (let i = 0; i + 7 <= d.length; i += 7) o.push({ at: ringTime(d, i), temp: parseFloat(`${d[i + 5]}.${d[i + 6]}`) }); return o; };
 
+  const dec = (int, frac) => int ? parseFloat(`${int}.${frac}`) : 0;
   function putMetric(kind, at, v) {
     if (!v || !plausible(at)) return 0;
     const m = metrics[kind] || (metrics[kind] = {}), k = stamp(at);
@@ -737,12 +800,40 @@
       }],
       ["combined", OP.HIST_ALL, (d) => {
         let n = 0;
-        for (const x of parseAll(d)) for (const k of ["spo2", "hrv", "resp", "temp"]) n += putMetric(k, x.at, x[k]);
+        for (const x of parseAll(d)) for (const k of ["spo2", "hrv", "resp", "temp", "sbp", "dbp", "sugar"]) n += putMetric(k, x.at, x[k]);
         for (const x of parseAll(d)) putMetric("allsteps", x.at, x.steps);
         return n && "SpO₂/HRV/temperature";
       }],
       ["SpO₂", OP.HIST_SPO2, (d) => { let n = 0; for (const x of parseSpo2(d)) n += putMetric("spo2", x.at, x.spo2); return n && "SpO₂"; }],
       ["temperature", OP.HIST_TEMP, (d) => { let n = 0; for (const x of parseTemp(d)) n += putMetric("temp", x.at, x.temp); return n && "temperature"; }],
+      // Blood pressure: [time u32, inflated, SBP, DBP, HR]
+      ["blood pressure", OP.HIST_BP, (d) => {
+        let n = 0;
+        for (let i = 0; i + 8 <= d.length; i += 8) { const at = ringTime(d, i); n += putMetric("sbp", at, d[i + 5]); putMetric("dbp", at, d[i + 6]); }
+        return n && "blood pressure";
+      }],
+      // Body data: [time u32, load int.frac, HRV int.frac, stress int.frac, ...] (28 bytes)
+      ["stress & HRV", OP.HIST_BODY, (d) => {
+        let n = 0;
+        for (let i = 0; i + 28 <= d.length; i += 28) { const at = ringTime(d, i); n += putMetric("stress", at, dec(d[i + 8], d[i + 9])); n += putMetric("hrv", at, dec(d[i + 6], d[i + 7])); }
+        return n && "stress/HRV";
+      }],
+      // Comprehensive measurements: [time u32, sugar model, sugar int.frac, ...] (44 bytes)
+      ["blood sugar", OP.HIST_COMPREHENSIVE, (d) => {
+        let n = 0;
+        for (let i = 0; i + 44 <= d.length; i += 44) n += putMetric("sugar", ringTime(d, i), dec(d[i + 5], d[i + 6]));
+        return n && "blood sugar";
+      }],
+      // Health monitoring: [time u32, steps u32, HR, SBP, DBP, SpO2, resp, HRV, ...] (29 bytes)
+      ["health monitoring", OP.HIST_MONITOR, (d) => {
+        let n = 0;
+        for (let i = 0; i + 29 <= d.length; i += 29) {
+          const at = ringTime(d, i);
+          n += putMetric("spo2", at, d[i + 11]) + putMetric("sbp", at, d[i + 9]) + putMetric("hrv", at, d[i + 13]);
+          putMetric("dbp", at, d[i + 10]);
+        }
+        return n && "health log";
+      }],
     ];
     for (const [name, op, apply] of types) {
       try {
@@ -1017,7 +1108,9 @@
     $("sMax").innerHTML = fmt(vals.length ? Math.max(...vals) : null);
     drawChart(rows);
     renderSleep();
-    renderOthers(today);
+    renderRing();
+    if (METRICS[currentView]) renderMetric(currentView);
+    renderNav();
     $("tableSummary").textContent = `${rows.length} reading${rows.length === 1 ? "" : "s"} this day`;
     $("tbody").innerHTML = rows.slice().reverse().map(([d, b], i, arr) => {
       const older = arr[i + 1]?.[0];
@@ -1340,47 +1433,268 @@
   }
   fillTune();
 
-  // ── Other stats (only what the ring actually reported) ──────────────────
-  const KINDS = [
-    ["steps", "Steps", "", "sum"], ["spo2", "Blood oxygen", "%", "last"], ["hrv", "HRV", "ms", "last"],
-    ["temp", "Temperature", "°C", "last"], ["resp", "Breathing", "/min", "last"],
-  ];
-  function renderOthers(today) {
-    const rowsFor = (kind) => Object.entries(metrics[kind] || {}).filter(([t]) => t.startsWith(dayKey(viewDay))).sort();
-    const tiles = [];
-    for (const [kind, label, unit, agg] of KINDS) {
-      let src = kind;
-      if (kind === "steps" && !Object.keys(metrics.steps || {}).length && Object.keys(metrics.allsteps || {}).length) src = "allsteps";
-      if (!Object.keys(metrics[src] || {}).length) continue;
-      const r = rowsFor(src);
-      let val = "–", sub = "No data this day";
-      if (r.length) {
-        if (agg === "sum") { val = r.reduce((a, [, v]) => a + v, 0).toLocaleString(); sub = `${r.length} record${r.length === 1 ? "" : "s"}`; }
-        else { const [t, v] = r[r.length - 1]; val = v; sub = `at ${clock(parseStamp(t))}`; }
-      }
-      tiles.push(`<div class="tile"><dt>${label}</dt><dd>${val}${unit && val !== "–" ? `<small>${unit}</small>` : ""}</dd><span class="sub">${sub}</span></div>`);
-    }
-    $("tiles").innerHTML = tiles.join("");
-    $("otherDay").textContent = today ? "Today" : viewDay.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  // ── Ring & data page: what the ring says it supports and what Sync found ─
+  function featureSet() {
+    const f = store.get(KEY_FEAT, null);
+    return f && f.bits ? new Set(FEATURES.filter(([b, i]) => b < f.bits.length && (f.bits[b] >> i) & 1).map(([, , n]) => n)) : null;
+  }
+  function renderRing() {
     const names = { "SpO₂": "blood oxygen", combined: "combined health log", steps: "steps", sleep: "sleep", temperature: "temperature" };
     let line = "";
     if (support) {
       const pick = (st) => Object.entries(support).filter(([, v]) => v === st).map(([k]) => names[k] || k);
       const ok = pick("ok"), empty = pick("empty"), no = pick("unsupported"), err = pick("error");
-      line = [ok.length && `Ring reported data for: ${ok.join(", ")}.`, empty.length && `Supported but empty so far: ${empty.join(", ")}.`,
+      line = [ok.length && `Ring sent data for: ${ok.join(", ")}.`, empty.length && `Supported but empty so far: ${empty.join(", ")}.`,
         no.length && `Not available on this ring: ${no.join(", ")}.`, err.length && `Couldn't read: ${err.join(", ")} (see Bluetooth log).`].filter(Boolean).join(" ");
     }
-    $("supportLine").textContent = line;
-    const f = store.get(KEY_FEAT, null);
-    let hasFeat = false;
-    if (f && f.bits) {
-      const on = new Set(FEATURES.filter(([b, i]) => b < f.bits.length && (f.bits[b] >> i) & 1).map(([, , n]) => n));
+    $("supportLine").textContent = line || "Sync to see which histories the ring sends.";
+    const on = featureSet();
+    if (on) {
       $("feats").innerHTML = HEALTH_FEATURES.map(([k, label]) => `<li><b class="${on.has(k) ? "yes" : "no"}">${on.has(k) ? "Yes" : "No"}</b>${label}</li>`).join("");
       $("featAll").textContent = [...on].map((n) => n.replace(/^_/, "").replace(/_/g, " ").toLowerCase()).sort().join(", ") || "None";
-      hasFeat = true;
     }
-    $("featBox").hidden = !hasFeat;
-    $("otherCard").hidden = !tiles.length && !line && !hasFeat;
+    $("featBox").hidden = !on;
+  }
+
+  // ── Metric pages (steps, blood oxygen, HRV, stress, blood pressure, blood sugar) ──
+  const METRICS = {
+    steps: { title: "Steps", unit: "steps", kinds: ["steps"], sum: true },
+    spo2: { title: "Blood oxygen", unit: "%", kinds: ["spo2"], monitor: ["SET_SPO2_MONITOR", "blood oxygen"] },
+    hrv: { title: "HRV", unit: "ms", kinds: ["hrv"],
+      note: "Heart-rate variability: higher usually means more rested and recovered. Compare it with your own trend over days, not with other people's numbers." },
+    stress: { title: "Stress", unit: "", kinds: ["stress"],
+      note: "A stress score the ring calculates from heart-rate variability. Treat it as a rough day-to-day trend, not a diagnosis." },
+    bp: { title: "Blood pressure", unit: "mmHg", kinds: ["sbp", "dbp"], names: ["Systolic", "Diastolic"], monitor: ["SET_BP_MONITOR", "blood pressure"],
+      note: "Estimated by the ring's optical sensor, not measured with a cuff. It can be far off; don't base medical decisions on it. Use a cuff monitor if blood pressure matters to you." },
+    sugar: { title: "Blood sugar", unit: "mmol/L", kinds: ["sugar"],
+      note: "A ring can't measure blood glucose through the skin. This number is the ring's algorithmic guess, not a glucose reading. Don't use it for any medical decision." },
+  };
+  const SERIES_COLORS = ["--st-light", "--st-awake"];   // validated categorical slots (blue, orange)
+  const KEY_MON = "ringpulse.monitors.v1";
+  const fmtV = (v) => Number.isInteger(v) ? v.toLocaleString() : v.toFixed(1);
+  function kindRows(kind, k) {
+    const src = kind === "steps" && !Object.keys(metrics.steps || {}).length ? "allsteps" : kind;
+    return Object.entries(metrics[src] || {}).filter(([t]) => !k || t.startsWith(k)).sort()
+      .map(([t, v]) => [parseStamp(t), v, kind === "steps" && metrics.stepsEnd?.[t] ? parseStamp(metrics.stepsEnd[t]) : null]);
+  }
+  function hasMetric(id) { return METRICS[id].kinds.some((k) => kindRows(k).length); }
+
+  function renderMetric(id) {
+    const M = METRICS[id], box = $(`m-${id}`), dk = dayKey(viewDay);
+    const today = dk === dayKey(new Date());
+    const dayLabel = today ? "Today" : viewDay.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    const series = M.kinds.map((k, i) => ({ kind: k, name: M.names?.[i] || M.title, color: SERIES_COLORS[i], rows: kindRows(k, dk) }));
+    const main = series[0].rows;
+    const any = hasMetric(id);
+    let big = "–", when = any ? "No readings on this day." : `No ${M.title.toLowerCase()} data yet. Sync after wearing the ring${M.monitor ? ", and turn on automatic checks below" : ""}.`;
+    let stats = [["Low", "–"], ["Average", "–"], ["High", "–"]];
+    if (main.length) {
+      const vals = main.map((r) => r[1]);
+      if (M.sum) {
+        big = fmtV(vals.reduce((a, b) => a + b, 0));
+        when = `${dayLabel}, from ${main.length} record${main.length === 1 ? "" : "s"}`;
+        const busiest = main.reduce((a, b) => (b[1] > a[1] ? b : a));
+        stats = [["Records", main.length], ["Busiest", `${clock(busiest[0])}`], ["Most", fmtV(busiest[1])]];
+      } else {
+        const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+        const per = (f) => series.map((s) => s.rows.length ? fmtV(Math.round(f(s.rows.map((r) => r[1])) * 10) / 10) : "–").join("/");
+        stats = [["Low", per((a) => Math.min(...a))], ["Average", per(avg)], ["High", per((a) => Math.max(...a))]];
+      }
+    }
+    if (!M.sum && any) {
+      // Headline: the latest reading overall (like the heart-rate page), whatever day is selected.
+      const lastAll = series.map((s) => kindRows(s.kind).at(-1)).filter(Boolean);
+      const t = lastAll[0][0], sameDay = dayKey(t) === dayKey(new Date());
+      big = lastAll.map((r) => fmtV(r[1])).join("/");
+      when = `Latest reading, ${clock(t)}${sameDay ? "" : `, ${t.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}`}${main.length ? "" : ` · nothing on ${dayLabel.toLowerCase() === "today" ? "today" : dayLabel} yet`}`;
+    }
+    const mon = store.get(KEY_MON, {})[id];
+    box.innerHTML = `
+      <section class="hero">
+        <div class="now"><span class="num">${big}</span><span class="unit">${M.unit}</span><span class="when">${when}</span></div>
+        <dl class="stats">${stats.map(([k, v]) => `<div class="stat"><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+      </section>
+      ${M.note ? `<p class="caveat">${M.note}</p>` : ""}
+      <section class="card">
+        <div class="dayhead">
+          <h2>${M.title}</h2>
+          <div class="daynav">
+            <button class="mprev" aria-label="Previous day">‹</button>
+            <span class="day">${dayLabel}</span>
+            <button class="mnext" aria-label="Next day" ${today ? "disabled" : ""}>›</button>
+          </div>
+        </div>
+        <div class="chart mday"></div>
+        <div class="legend">${series.length > 1 ? series.map((s) => `<span><i style="background:var(${s.color})"></i>${s.name}</span>`).join("") : ""}</div>
+        <details><summary>${main.length} reading${main.length === 1 ? "" : "s"} this day</summary>
+          <div class="tablewrap"><table><thead><tr><th>Time</th>${series.map((s) => `<th>${series.length > 1 ? s.name : M.unit || "Value"}</th>`).join("")}</tr></thead><tbody>
+          ${main.slice().reverse().map(([t, v], i) => `<tr><td>${clock(t)}${main.at(-1 - i)[2] ? `–${clock(main.at(-1 - i)[2])}` : ""}</td><td>${fmtV(v)}</td>${series.slice(1).map((s) => { const m = s.rows.find((r) => +r[0] === +t); return `<td>${m ? fmtV(m[1]) : "–"}</td>`; }).join("")}</tr>`).join("")}
+          </tbody></table></div></details>
+      </section>
+      <section class="card">
+        <span class="subhead">Last 7 days · ${M.sum ? "daily total" : "daily average"}</span>
+        <div class="chart mweek"></div>
+      </section>
+      ${M.monitor ? `
+      <section class="card">
+        <h2>Automatic checks</h2>
+        <div class="row">
+          <label for="mon-${id}">Measure ${M.monitor[1]}</label>
+          <select id="mon-${id}">${[["0", "Off"], ["30", "Every 30 min"], ["60", "Every hour"], ["120", "Every 2 hours"], ["240", "Every 4 hours"]]
+            .map(([v, l]) => `<option value="${v}" ${String(mon ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <button class="monapply">Apply</button>
+        </div>
+        <p class="hint">Some rings only record ${M.monitor[1]} when this is on. More frequent checks use more battery. The ring can't report this setting, so this shows what was last applied from this phone${mon == null ? " (nothing yet)" : ""}.</p>
+      </section>` : ""}`;
+    box.querySelector(".mprev").addEventListener("click", () => { viewDay = new Date(viewDay); viewDay.setDate(viewDay.getDate() - 1); render(); });
+    box.querySelector(".mnext").addEventListener("click", () => { viewDay = new Date(viewDay); viewDay.setDate(viewDay.getDate() + 1); render(); });
+    box.querySelector(".monapply")?.addEventListener("click", () => guarded("Setting automatic checks", async () => {
+      const minutes = Number($(`mon-${id}`).value), op = OP[M.monitor[0]];
+      await connect();
+      const start = frames.length;
+      await send(op, [minutes ? 1 : 0, minutes || 0]);
+      const ack = await waitFor((f) => f.op === op, 3000, start);
+      if (!ack || ack.payload[0] !== 0) throw new Error(`the ring refused it (${ack ? ERRORS[ack.payload[0]] || `code ${ack.payload[0]}` : "no reply"})`);
+      const all = store.get(KEY_MON, {}); all[id] = minutes; store.set(KEY_MON, all);
+      notify(minutes ? `The ring will now check ${M.monitor[1]} every ${minutes} minutes.` : `Automatic ${M.monitor[1]} checks are off.`);
+      render();
+    }));
+    drawMetricDay(box.querySelector(".mday"), series, M);
+    drawMetricWeek(box.querySelector(".mweek"), id, M);
+  }
+
+  // Day chart: steps as bars over each record's span; other metrics as dots joined when close in time.
+  function drawMetricDay(box, series, M) {
+    box.innerHTML = "";
+    if (!series.some((s) => s.rows.length)) { box.innerHTML = `<div class="empty">No readings on this day.</div>`; return; }
+    const W = Math.max(280, box.clientWidth || 500), H = 200, L = 40, R = 10, T = 12, B = 24;
+    const day0 = new Date(viewDay); day0.setHours(0, 0, 0, 0);
+    const x = (d) => L + ((d - day0) / 864e5) * (W - L - R);
+    const all = series.flatMap((s) => s.rows.map((r) => r[1]));
+    let lo = M.sum ? 0 : Math.min(...all), hi = Math.max(...all);
+    const span = Math.max(1, hi - lo), stepGuess = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000].find((st) => span / st <= 5) || 5000;
+    lo = M.sum ? 0 : Math.floor((lo - span * 0.1) / stepGuess) * stepGuess; hi = Math.ceil((hi + span * 0.1) / stepGuess) * stepGuess;
+    if (hi <= lo) hi = lo + stepGuess;
+    const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${M.title} across the day` }, box);
+    const css = getComputedStyle(document.documentElement), c = (v) => css.getPropertyValue(v).trim();
+    for (let v = lo; v <= hi + 1e-9; v += stepGuess) {
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: c("--grid") }, svg);
+      const t = el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, svg); t.textContent = fmtV(v);
+    }
+    for (let h = 0; h <= 24; h += 6) {
+      const t = el("text", { x: x(new Date(day0.getTime() + h * 36e5)), y: H - 6, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle" }, svg);
+      t.textContent = `${pad(h % 24)}:00`;
+    }
+    const pts = [];
+    for (const s of series) {
+      const col = c(s.color);
+      if (M.sum) {
+        for (const [t, v, end] of s.rows) {
+          const x0 = x(t), x1 = Math.max(x0 + 3, x(end || new Date(t.getTime() + 36e5)) - 2);
+          const top = y(v), r = Math.min(3, (y(0) - top) / 2);
+          el("path", { d: `M${x0},${y(0)} V${top + r} q0,-${r} ${r},-${r} H${x1 - r} q${r},0 ${r},${r} V${y(0)} Z`, fill: col }, svg);
+          pts.push([x0 + (x1 - x0) / 2, top, `${fmtV(v)} steps · ${clock(t)}${end ? `–${clock(end)}` : ""}`]);
+        }
+      } else {
+        let d = "", prev = null;
+        for (const [t, v] of s.rows) { d += `${prev && t - prev <= 90 * 60000 ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`; prev = t; }
+        el("path", { d, fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+        for (const [t, v] of s.rows) {
+          el("circle", { cx: x(t), cy: y(v), r: 4, fill: col, stroke: c("--surface"), "stroke-width": 2 }, svg);
+          pts.push([x(t), y(v), `${series.length > 1 ? s.name + " " : ""}${fmtV(v)}${M.unit ? " " + M.unit : ""} · ${clock(t)}`]);
+        }
+      }
+    }
+    const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+    const show = (ev) => {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+      let best = pts[0]; for (const p of pts) if (Math.abs(p[0] - px) < Math.abs(best[0] - px)) best = p;
+      tip.textContent = best[2]; tip.hidden = false;
+      tip.style.left = `${Math.min(Math.max(best[0] * (r.width / W), 80), r.width - 80)}px`; tip.style.top = `${Math.max(0, best[1] * (r.height / H) - 36)}px`;
+    };
+    svg.addEventListener("pointermove", show); svg.addEventListener("pointerdown", show);
+    svg.addEventListener("pointerleave", () => { tip.hidden = true; });
+  }
+
+  // 7-day chart: daily total (steps) or daily average, one bar per series per day; tap a day to open it.
+  function drawMetricWeek(box, id, M) {
+    box.innerHTML = "";
+    const days = []; for (let i = 6; i >= 0; i--) { const d = new Date(viewDay); d.setDate(d.getDate() - i); days.push(d); }
+    const val = (kind, d) => { const r = kindRows(kind, dayKey(d)).map((x) => x[1]); if (!r.length) return null; const s = r.reduce((a, b) => a + b, 0); return M.sum ? s : s / r.length; };
+    const data = days.map((d) => M.kinds.map((k) => val(k, d)));
+    const flat = data.flat().filter((v) => v != null);
+    if (!flat.length) { box.innerHTML = `<div class="empty">No data in the last 7 days.</div>`; return; }
+    const W = Math.max(280, box.clientWidth || 500), H = 140, L = 40, R = 8, T = 10, B = 22;
+    const max = Math.max(...flat), stp = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000].find((st) => max / st <= 5) || 10000;
+    const hi = Math.ceil(max / stp) * stp || stp, y = (v) => T + (1 - v / hi) * (H - T - B);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${M.title}, last 7 days` }, box);
+    const css = getComputedStyle(document.documentElement), c = (v) => css.getPropertyValue(v).trim();
+    for (let v = 0; v <= hi; v += stp) {
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: c("--grid") }, svg);
+      const t = el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, svg); t.textContent = fmtV(v);
+    }
+    const slot = (W - L - R) / 7, n = M.kinds.length, bw = Math.min(n > 1 ? 12 : 24, slot * (n > 1 ? 0.3 : 0.6));
+    days.forEach((d, i) => {
+      const cx = L + slot * (i + 0.5), sel = dayKey(d) === dayKey(viewDay);
+      const t = el("text", { x: cx, y: H - 5, "text-anchor": "middle" }, svg); t.textContent = d.toLocaleDateString([], { weekday: "short" }).slice(0, 2);
+      data[i].forEach((v, j) => {
+        if (v == null) return;
+        const bx = cx + (j - (n - 1) / 2) * (bw + 2) - bw / 2, top = y(v), r = Math.min(3, (y(0) - top) / 2);
+        const p = el("path", { d: `M${bx},${y(0)} V${top + r} q0,-${r} ${r},-${r} H${bx + bw - r} q${r},0 ${r},${r} V${y(0)} Z`,
+          fill: c(SERIES_COLORS[j]), opacity: sel ? 1 : 0.6, style: "cursor:pointer" }, svg);
+        el("title", {}, p).textContent = `${M.names?.[j] || M.title}: ${fmtV(Math.round(v * 10) / 10)}${M.unit ? " " + M.unit : ""}`;
+        p.addEventListener("click", () => { viewDay = new Date(d); render(); });
+      });
+    });
+  }
+
+  // ── Navigation: sidebar on wide screens, slide-out drawer on phones ──────
+  const VIEWS = [
+    ["heart", "Heart rate", "HEARTRATE"], ["sleep", "Sleep", "SLEEP"], ["steps", "Steps", "STEPCOUNT"],
+    ["spo2", "Blood oxygen", "BLOODOXYGEN"], ["hrv", "HRV", "HRV"], ["stress", "Stress", "PRESSURE"],
+    ["bp", "Blood pressure", "TESTBLOOD"], ["sugar", "Blood sugar", "BLOODSUGAR"], null, ["ring", "Ring & data", null],
+  ];
+  let currentView = "heart";
+  function navSummary(id) {
+    if (id === "heart") { const k = [...readings.keys()].sort().at(-1); return k ? `${readings.get(k)}` : ""; }
+    if (id === "sleep") { const by = sleepDays(), k = Object.keys(by).sort().at(-1); if (!k) return ""; const d = by[k], sec = d.ringTotal || d.estTotal; return sec ? `${Math.floor(sec / 3600)}h${pad(Math.round(sec / 60) % 60)}` : ""; }
+    if (METRICS[id]) {
+      const M = METRICS[id];
+      if (M.sum) { const r = kindRows(M.kinds[0], dayKey(new Date())); return r.length ? fmtV(r.reduce((a, b) => a + b[1], 0)) : ""; }
+      const v = M.kinds.map((k) => kindRows(k).at(-1)?.[1]).filter((x) => x != null);
+      return v.length ? v.map(fmtV).join("/") : "";
+    }
+    return "";
+  }
+  function renderNav() {
+    const on = featureSet();
+    $("navlist").innerHTML = VIEWS.map((v) => {
+      if (!v) return `<li class="sep" role="separator"></li>`;
+      const [id, label, feat] = v;
+      if (on && feat && !on.has(feat) && id !== "heart") return "";
+      return `<li><button data-view="${id}" ${id === currentView ? 'aria-current="page"' : ""}>${label}<small>${navSummary(id)}</small></button></li>`;
+    }).join("");
+  }
+  $("navlist").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) showView(b.dataset.view); });
+  function setDrawer(open) {
+    $("sidebar").classList.toggle("open", open);
+    $("backdrop").hidden = !open;
+    $("menuBtn").setAttribute("aria-expanded", String(open));
+    if (open) $("navlist").querySelector("button")?.focus();
+  }
+  $("menuBtn").addEventListener("click", () => setDrawer(!$("sidebar").classList.contains("open")));
+  $("backdrop").addEventListener("click", () => setDrawer(false));
+  addEventListener("keydown", (e) => { if (e.key === "Escape") setDrawer(false); });
+  function showView(id) {
+    if (!VIEWS.some((v) => v && v[0] === id)) id = "heart";
+    currentView = id;
+    for (const sec of document.querySelectorAll("section.view")) sec.hidden = sec.dataset.view !== id;
+    $("viewTitle").textContent = VIEWS.find((v) => v && v[0] === id)[1];
+    try { history.replaceState(null, "", id === "heart" ? location.pathname : `#${id}`); } catch {}
+    setDrawer(false);
+    render();
+    scrollTo(0, 0);
   }
 
   // ── Chart (single series: one hue, no legend; crosshair + tooltip) ──────
@@ -1458,7 +1772,7 @@
   if (!usingExample) viewDay = latestDay();
   setButtons();
   renderBattery();
-  render();
+  showView(location.hash.slice(1) || "heart");
 })();
 </script>
 </body>
