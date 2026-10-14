@@ -627,7 +627,11 @@
   function renderNow() {
     if (live) return;
     const all = [...source()].sort((a, b) => a[0] < b[0] ? -1 : 1);
-    if (!all.length) { $("nowNum").textContent = "–"; return; }
+    if (!all.length) {
+      $("nowNum").textContent = "––";
+      $("nowWhen").textContent = lastSync ? "The ring has no stored readings yet. Wear it for a while and sync again." : "No readings yet. Tap Sync to pull them from the ring.";
+      return;
+    }
     const [t, b] = all[all.length - 1], d = parseStamp(t);
     $("nowNum").textContent = b;
     const mins = Math.round((Date.now() - d) / 60000);
