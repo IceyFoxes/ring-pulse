@@ -99,6 +99,15 @@
   .chip[data-state="busy"]::before { background: var(--warn); }
   .chip[data-state="err"]::before { background: var(--bad); }
 
+  .meta { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin-top: -8px; font-variant-numeric: tabular-nums; }
+  .batt { position: relative; width: 26px; height: 13px; border: 1.5px solid var(--ink-2); border-radius: 3px; padding: 1.5px; flex: none; }
+  .batt::after { content: ""; position: absolute; right: -4px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: var(--ink-2); }
+  .batt i { display: block; height: 100%; width: 0; border-radius: 1px; background: var(--good); }
+  .batt[data-level="low"] i { background: var(--warn); }
+  .batt[data-level="crit"] i { background: var(--bad); }
+  .batt[data-level="none"] { opacity: 0.4; }
+  .meta .sep { color: var(--line); }
+
   /* Notices */
   .notice {
     font-size: 14px; color: var(--ink-2); background: var(--surface);
@@ -191,6 +200,11 @@
     <span class="chip" id="chip" data-state="off">Not connected</span>
   </header>
 
+  <div class="meta" id="meta">
+    <span class="batt" id="batt" data-level="none" aria-hidden="true"><i id="battFill"></i></span>
+    <span id="battText">Battery unknown · sync to check</span>
+  </div>
+
   <div class="notice err" id="noBle" hidden>
     <strong>Bluetooth isn't available in this browser.</strong> Open this page in Chrome on Android (or Chrome/Edge on a computer). Firefox and iPhone browsers don't support Web Bluetooth.
   </div>
@@ -274,6 +288,8 @@
   const YC_C3 = "be940003-7333-be46-b7ae-689e71722bd5"; // indicate
   const OP = {
     TIME_SYNC: 0x0100, SET_HEART_MONITOR: 0x010C,
+    GET_INFO: 0x0200,   // payload "GC"; reply: [id u16, fw minor, fw major, battery state, battery %, ...]
+    RT_BATTERY: 0x0615, // ring push: [charging, battery %]
     HEART_TEST: 0x0301, REAL_STREAM: 0x0309, RT_HR: 0x0601,
     HIST_HEART: 0x0506, HIST_HEART_DATA: 0x0515, HIST_BLOCK_END: 0x0580,
   };
@@ -300,6 +316,7 @@
   // ── Storage ─────────────────────────────────────────────────────────────
   const KEY = "ringpulse.readings.v1";
   const KEY_IV = "ringpulse.interval";
+  const KEY_BATT = "ringpulse.battery"; // {pct, fw, at}
   const store = {
     get(k, fallback) { try { const v = localStorage.getItem(k); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -348,6 +365,7 @@
         const fr = { op, payload };
         frames.push(fr);
         if (op === OP.RT_HR && payload.length) onLiveBpm(payload[0]);
+        if (op === OP.RT_BATTERY && payload.length >= 2) setBattery(payload[1]);
         waiters = waiters.filter((w) => !(w.pred(fr) && (w.resolve(fr), true)));
       }
     };
@@ -402,7 +420,29 @@
     await send(OP.TIME_SYNC, [n.getFullYear() & 0xFF, n.getFullYear() >> 8, n.getMonth() + 1, n.getDate(), n.getHours(), n.getMinutes(), n.getSeconds(), wd]);
     setChip("on", "Connected");
     log("connected, clock synced");
+    const start = frames.length;
+    await send(OP.GET_INFO, [0x47, 0x43]);
+    const info = frames.slice(start).find((f) => f.op === OP.GET_INFO) || await waitFor((f) => f.op === OP.GET_INFO, 3000);
+    if (info && info.payload.length >= 6) setBattery(info.payload[5], `${info.payload[3]}.${pad(info.payload[2])}`);
+    else log("ring did not report battery");
   }
+  function setBattery(pct, fw) {
+    if (pct > 100) return;
+    const prev = store.get(KEY_BATT, {});
+    store.set(KEY_BATT, { pct, fw: fw || prev.fw, at: Date.now() });
+    renderBattery();
+  }
+  function renderBattery() {
+    const b = store.get(KEY_BATT, null);
+    const batt = $("batt");
+    if (!b) { batt.dataset.level = "none"; return; }
+    $("battFill").style.width = `${b.pct}%`;
+    batt.dataset.level = b.pct <= 10 ? "crit" : b.pct <= 25 ? "low" : "ok";
+    const at = new Date(b.at);
+    const fresh = Date.now() - b.at < 5 * 60000;
+    $("battText").textContent = `Battery ${b.pct}%${fresh ? "" : ` · as of ${at.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`}${b.fw ? ` · firmware ${b.fw}` : ""}`;
+  }
+
   function onDisconnect() {
     c1 = null;
     stopLiveTimer();
@@ -439,10 +479,13 @@
     notify("");
     try { await fn(); }
     catch (e) {
-      if (e && e.name === "NotFoundError") { notify("No ring selected. Tap Sync and pick RW009 from the list."); }
+      if (e && e.name === "NotFoundError") { notify("No ring selected. Tap Sync and pick RW009 from the list. If it isn't listed, the ring may be out of battery or still connected to the PC; put it on the charger and try again."); }
       else {
         console.error(e);
-        notify(`${label} failed: ${e.message || e}. Make sure the ring is nearby and not connected to the PC script, then try again.`, true);
+        const unreachable = !device?.gatt.connected;
+        notify(unreachable
+          ? `Couldn't reach the ring (${e.message || e}). Check it isn't connected to the PC script. If it still won't connect, it's probably out of battery: put it on the charger for 10 minutes and try again.`
+          : `${label} failed: ${e.message || e}. Try again.`, true);
         setChip(device?.gatt.connected ? "on" : "err", device?.gatt.connected ? "Connected" : "Connection lost");
       }
     }
@@ -461,12 +504,12 @@
     }
     save();
     usingExample = false;
+    lastSync = new Date();
     const latest = latestDay(); if (latest) viewDay = latest;
     render();
     setChip("on", "Connected");
     const s = `${rows.length} reading${rows.length === 1 ? "" : "s"} on the ring, ${added} new.`;
     notify(skipped ? `${s} ${skipped} with an impossible date were skipped.` : s);
-    lastSync = new Date();
   }));
 
   $("btnInterval").addEventListener("click", () => guarded("Setting the interval", async () => {
@@ -584,7 +627,10 @@
     $("nowNum").textContent = b;
     const mins = Math.round((Date.now() - d) / 60000);
     const ago = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} h ago` : d.toLocaleDateString([], { month: "short", day: "numeric" });
-    $("nowWhen").textContent = `${usingExample ? "Example · " : ""}Last stored reading, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (${ago})`;
+    const iv = store.get(KEY_IV, 5);
+    const stale = !usingExample && lastSync && mins > Math.max(3 * iv, 20);
+    $("nowWhen").textContent = `${usingExample ? "Example · " : ""}Last stored reading, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (${ago})`
+      + (stale ? `. No newer readings, which with a ${iv}-minute interval usually means the ring was off your finger or the battery ran out.` : "");
   }
 
   function render() {
@@ -682,6 +728,7 @@
   usingExample = readings.size === 0;
   if (!usingExample) viewDay = latestDay();
   setButtons();
+  renderBattery();
   render();
 })();
 </script>
