@@ -336,6 +336,7 @@
         <button id="btnMeasure">Measure now</button>
         <button id="btnLive" aria-pressed="false">Live</button>
       </div>
+      <button class="small" id="btnStopMeasure">Stop measuring (turns the green light off)</button>
       <section class="card">
         <div class="dayhead">
           <h2>Heart rate</h2>
@@ -1023,6 +1024,15 @@
     return v.length >= 4 && Math.max(...last) - Math.min(...last) <= 3
       ? Math.round(last.reduce((a, b) => a + b, 0) / 3) : null;
   };
+  // The RW009 keeps a one-off measurement running until told to stop, so after a grace period for
+  // it to finish by itself we send the vendor's stop (as HealthWear does), then re-apply the interval.
+  async function finishMeasurement(sinceIdx, graceMs, why) {
+    const done = await waitFor((f) => f.op === OP.MEASURE_DONE, graceMs, sinceIdx);
+    if (!done) { await send(OP.MEASURE, [0, 0]); log(`${why}: ring hadn't finished, sent stop`); }
+    else log(`${why}: ring finished by itself`);
+    await reapplyMonitor(why);
+  }
+
   async function arm() { await send(OP.HEART_TEST, [1]); await send(OP.REAL_STREAM, [1]); }
 
   // Live, the way HealthWear's heart-rate screen does it: a one-off measurement (0x032F [1, 0])
@@ -1068,13 +1078,12 @@
     const l = live; live = null;
     clearInterval(l.timer);
     try { await l.wake?.release(); } catch {}
-    // Don't interrupt the round in progress (see Measure now); the ring ends it by itself.
-    if (c1) { try { await reapplyMonitor("after live"); } catch {} }
     $("btnLive").classList.remove("on"); $("btnLive").setAttribute("aria-pressed", "false"); $("btnLive").textContent = "Live";
     $("now").classList.remove("live");
     setButtons(); render();
-    notify(`Live stopped${reason ? ` (${reason})` : ""}. ${l.saved} reading${l.saved === 1 ? "" : "s"} saved to your history.`);
+    notify(`Live stopped${reason ? ` (${reason})` : ""}. ${l.saved} reading${l.saved === 1 ? "" : "s"} saved to your history. The green light goes off within ~20 s.`);
     log(`live stopped: ${l.saved} saved over ${l.rounds} measurement${l.rounds === 1 ? "" : "s"}`);
+    if (c1) { try { await finishMeasurement(l.startIdx, 20000, "live stopped"); } catch {} }
   }
   $("btnLive").addEventListener("click", () => {
     if (live) return stopLive();
@@ -1122,9 +1131,9 @@
       try {
         // No stop command for one-off measurements: on the RW009, stopping one mid-way left automatic
         // measuring switched off. The ring finishes the measurement on its own within about a minute.
-        if (oneShot) log(m.cancel ? "cancelled: letting the ring finish its current measurement on its own" : "measurement finished");
+        if (oneShot) await finishMeasurement(start, m.cancel ? 20000 : 2000, m.cancel ? "measure now cancelled" : "measure now done");
         else { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); }
-        await reapplyMonitor("after Measure now");
+        if (!oneShot) await reapplyMonitor("after Measure now");
       } catch {}
       measuring = null;
       btn.classList.remove("on"); btn.textContent = "Measure now";
@@ -1241,7 +1250,7 @@
   });
 
   function setButtons() {
-    for (const id of ["btnSync", "btnMeasure", "btnInterval", "btnJl", "btnLive", "btnOff"]) $(id).disabled = busy || !navigator.bluetooth;
+    for (const id of ["btnSync", "btnMeasure", "btnInterval", "btnJl", "btnLive", "btnOff", "btnStopMeasure"]) $(id).disabled = busy || !navigator.bluetooth;
     if (measuring) $("btnMeasure").disabled = false;
     if (live) { $("btnLive").disabled = false; $("btnMeasure").disabled = true; }
   }
@@ -2144,6 +2153,14 @@
   const JL_FILES = [[5, "Sleep"], [3, "Heart rate"], [4, "Blood oxygen"], [9, "Steps"], [2, "Sports records"]];
 
   $("btnJl").addEventListener("click", () => guarded("JieLi check", jlProbe));
+
+  $("btnStopMeasure").addEventListener("click", () => guarded("Stopping", async () => {
+    if (live) return stopLive();
+    await connect();
+    await send(OP.MEASURE, [0, 0]);
+    await reapplyMonitor("after manual stop");
+    notify("Sent stop. The green light should go off within a few seconds; automatic measuring was re-applied.");
+  }));
 
   let offArmed = 0;
   $("btnOff").addEventListener("click", () => {
