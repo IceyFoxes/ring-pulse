@@ -743,7 +743,7 @@
     const start = frames.length;
     await send(reqOp);
     const head = await waitFor((f) => f.op === reqOp, 5000, start);
-    if (!head) throw new Error(`The ring didn't answer the ${name} request. Try Sync again.`);
+    if (!head) throw new Error(`no reply to the ${name} request`);
     if (head.payload.length === 1 && head.payload[0] >= 0xFB) {
       log(`${name}: not supported by this ring`);
       return { status: "unsupported", data: [], count: 0 };
@@ -752,7 +752,7 @@
     log(`${name}: ring reports ${count} stored record${count === 1 ? "" : "s"}`);
     if (count === 0) return { status: "empty", data: [], count: 0 };
     const end = await waitFor((f) => f.op === OP.HIST_BLOCK_END, 15000, start);
-    if (!end) throw new Error(`The ring stopped sending ${name} partway. Try Sync again.`);
+    if (!end) throw new Error(`${name} download cut off`);
     const data = frames.slice(start)
       .filter((f) => f.op >> 8 === 0x05 && f.op !== reqOp && f.op !== OP.HIST_BLOCK_END)
       .flatMap((f) => f.payload);
@@ -760,7 +760,7 @@
     const crc = end.payload[4] | (end.payload[5] << 8);
     const ok = data.length === nbytes && crc16(data) === crc;
     await send(OP.HIST_BLOCK_END, [ok ? 0 : 4]);
-    if (!ok) throw new Error(`${name} arrived damaged (checksum mismatch). Try Sync again.`);
+    if (!ok) throw new Error(`${name} damaged in transfer`);
     return { status: "ok", data, count };
   }
 
@@ -871,7 +871,7 @@
         let n = 0;
         for (const x of parseAll(d)) for (const k of ["spo2", "hrv", "resp", "temp", "sbp", "dbp", "sugar"]) n += putMetric(k, x.at, x[k]);
         for (const x of parseAll(d)) putMetric("allsteps", x.at, x.steps);
-        return n && "SpO₂/HRV/temperature";
+        return n && "health log";
       }],
       ["SpO₂", OP.HIST_SPO2, (d) => { let n = 0; for (const x of parseSpo2(d)) n += putMetric("spo2", x.at, x.spo2); return n && "SpO₂"; }],
       ["temperature", OP.HIST_TEMP, (d) => { let n = 0; for (const x of parseTemp(d)) n += putMetric("temp", x.at, x.temp); return n && "temperature"; }],
@@ -947,13 +947,13 @@
     notify("");
     try { await fn(); }
     catch (e) {
-      if (e && e.name === "NotFoundError") { notify("No ring selected. Tap Sync and pick RW009 from the list. If it isn't listed, the ring may be out of battery or still connected to the PC; put it on the charger and try again."); }
+      if (e && e.name === "NotFoundError") { notify("No ring picked. Tap Sync and choose RW009. Not listed? Charge it or close the PC script."); }
       else {
         console.error(e);
         const unreachable = !device?.gatt.connected;
         notify(unreachable
-          ? `Couldn't reach the ring (${e.message || e}). Check it isn't connected to the PC script. If it still won't connect, it's probably out of battery: put it on the charger for 10 minutes and try again.`
-          : `${label} failed: ${e.message || e}. Try again.`, true);
+          ? `Can't reach the ring (${e.message || e}). Charge it or close the PC script, then retry.`
+          : `${label} failed: ${e.message || e}.`, true);
         setChip(device?.gatt.connected ? "on" : "err", device?.gatt.connected ? "Connected" : "Connection lost");
       }
     }
@@ -989,16 +989,15 @@
     selSleepDay = null; // jump to the latest sleep day with data
     render();
     setChip("on", "Connected");
-    let s = `Heart rate: ${rows.length} reading${rows.length === 1 ? "" : "s"} on the ring, ${added} new.`;
-    if (saveFailed) { notify(`${s} Saving on this phone FAILED (storage full or blocked), so nothing was cleared from the ring. Export CSV now and tell Claude.`, true); return; }
+    if (saveFailed) { notify("Saving failed (storage full?). Nothing was cleared from the ring. Export CSV.", true); return; }
+    const parts = [`Synced · ${added} new heart reading${added === 1 ? "" : "s"}`];
+    if (notes.length) parts.push(notes.join(", "));
+    if (skipped) parts.push(`${skipped} bad dates skipped`);
     if (store.get(KEY_CLEAR, false)) {
-      s += " Cleared from the ring after saving.";
-      const last = store.get(KEY_LASTEXPORT, 0);
-      if (Date.now() - last > 7 * 864e5) s += " This phone is the only copy now: export a CSV backup (Ring & data → Export CSV).";
+      parts.push("ring cleared");
+      if (Date.now() - store.get(KEY_LASTEXPORT, 0) > 7 * 864e5) parts.push("export a CSV backup");
     }
-    if (skipped) s += ` ${skipped} with an impossible date were skipped.`;
-    if (notes.length) s += ` Also downloaded: ${notes.join(", ")}.`;
-    notify(s);
+    notify(parts.join(" · ") + ".");
   }));
 
   $("btnInterval").addEventListener("click", () => guarded("Setting the interval", async () => {
@@ -1009,7 +1008,7 @@
     const ack = await waitFor((f) => f.op === OP.SET_HEART_MONITOR, 3000, start);
     if (ack && ack.payload[0] === 0) {
       store.set(KEY_IV, minutes);
-      notify(`The ring will now measure every ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+      notify(`Measuring every ${minutes} min.`);
     } else {
       const why = ack ? (ERRORS[ack.payload[0]] || `code ${ack.payload[0]}`) : "no reply";
       throw new Error(`the ring refused it (${why})`);
@@ -1081,7 +1080,7 @@
     $("btnLive").classList.remove("on"); $("btnLive").setAttribute("aria-pressed", "false"); $("btnLive").textContent = "Live";
     $("now").classList.remove("live");
     setButtons(); render();
-    notify(`Live stopped${reason ? ` (${reason})` : ""}. ${l.saved} reading${l.saved === 1 ? "" : "s"} saved to your history. The green light goes off within ~20 s.`);
+    notify(`Live stopped${reason ? ` (${reason})` : ""} · ${l.saved} saved.`);
     log(`live stopped: ${l.saved} saved over ${l.rounds} measurement${l.rounds === 1 ? "" : "s"}`);
     if (c1) { try { await finishMeasurement(l.startIdx, 20000, "live stopped"); } catch {} }
   }
@@ -1141,10 +1140,10 @@
       renderNow();
     }
     if (m.cancel) {
-      if (device?.gatt.connected) notify("Measurement cancelled.");
+      if (device?.gatt.connected) notify("Cancelled.");
       return;
     }
-    if (failed) throw new Error("the ring couldn't get a clean reading. Make sure it's snug on your finger, keep still, and try again");
+    if (failed) throw new Error("no clean reading. Wear it snug and keep still");
 
     // Pull history: if the ring stored the measurement itself, use its record; otherwise save ours.
     const at = new Date();
@@ -1153,11 +1152,10 @@
     merge(rows);
     const ringRec = rows.filter(([d]) => Math.abs(d - at) < 3 * 60000 && d >= t0 - 60000).at(-1);
     const bpm = ringRec ? ringRec[1] : live;
-    if (bpm == null) throw new Error("no heart rate came through. Make sure the ring is snug on your finger, keep still, and try again");
+    if (bpm == null) throw new Error("no heart rate came through. Wear it snug and keep still");
     if (!ringRec) { readings.set(stamp(at), bpm); save(); render(); }
     $("nowNum").textContent = bpm;
-    notify(`Measured ${bpm} bpm at ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. `
-      + (ringRec ? "The ring stored it too, so it's in your history." : "Saved to your history on this phone."));
+    notify(`${bpm} bpm at ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${ringRec ? " · also stored on the ring" : ""}.`);
   }
   function onLiveBpm(bpm) {
     if (!bpm || (!measuring && !live)) return;
@@ -1172,11 +1170,11 @@
   // (sleep "value" is minutes asleep). Import also accepts the PC script's time,bpm,mode file.
   $("btnCopyLog").addEventListener("click", async () => {
     const text = logEl.textContent;
-    try { await navigator.clipboard.writeText(text); notify("Bluetooth log copied. Paste it into the chat."); }
+    try { await navigator.clipboard.writeText(text); notify("Log copied."); }
     catch {
       const r = document.createRange(); r.selectNodeContents(logEl);
       const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      notify("Couldn't copy automatically; the log is selected, so use your phone's Copy.");
+      notify("Log selected. Use your phone's Copy.");
     }
   });
   const KEY_LASTEXPORT = "ringpulse.lastexport.v1";
@@ -1197,8 +1195,8 @@
     if (e.target.checked) {
       let granted = false;
       try { granted = await navigator.storage?.persist?.(); } catch {}
-      notify(`The ring will be cleared after each Sync, once its data is saved here. ${granted ? "Chrome agreed to keep this site's storage." : "Chrome didn't confirm it will keep this site's storage, so export a CSV regularly."}`);
-    } else notify("The ring will keep its data after Sync.");
+      notify(`Ring will be cleared after each Sync.${granted ? "" : " Export CSVs regularly."}`);
+    } else notify("Ring keeps its data after Sync.");
     renderStoreInfo();
   });
   $("btnExport").addEventListener("click", () => {
@@ -1245,7 +1243,7 @@
     save(); saveSleep(); usingExample = false; selSleepDay = null;
     const latest = latestDay(); if (latest) viewDay = latest;
     render();
-    notify(`Imported ${added} new record${added === 1 ? "" : "s"} from ${file.name}.${bad ? ` ${bad} with an impossible date were skipped.` : ""}`);
+    notify(`Imported ${added} from ${file.name}${bad ? ` · ${bad} bad dates skipped` : ""}.`);
     e.target.value = "";
   });
 
@@ -1773,7 +1771,7 @@
       const ack = await waitFor((f) => f.op === op, 3000, start);
       if (!ack || ack.payload[0] !== 0) throw new Error(`the ring refused it (${ack ? ERRORS[ack.payload[0]] || `code ${ack.payload[0]}` : "no reply"})`);
       const all = store.get(KEY_MON, {}); all[id] = minutes; store.set(KEY_MON, all);
-      notify(minutes ? `The ring will now check ${M.monitor[1]} every ${minutes} minutes.` : `Automatic ${M.monitor[1]} checks are off.`);
+      notify(minutes ? `${M.title} checks every ${minutes} min.` : `${M.title} checks off.`);
       render();
     }));
     drawMetricDay(box.querySelector(".mday"), series, M);
@@ -2159,7 +2157,7 @@
     await connect();
     await send(OP.MEASURE, [0, 0]);
     await reapplyMonitor("after manual stop");
-    notify("Sent stop. The green light should go off within a few seconds; automatic measuring was re-applied.");
+    notify("Stopped. Automatic measuring re-applied.");
   }));
 
   let offArmed = 0;
@@ -2178,7 +2176,7 @@
       const ack = await waitFor((f) => f.op === OP.SHUT_DOWN, 3000, start);
       if (ack && ack.payload.length === 1 && ack.payload[0] >= 0xFB) throw new Error(`the ring refused (${ERRORS[ack.payload[0]]})`);
       log(`shut down sent (${ack ? hex(ack.payload) : "no reply; the ring may already be off"})`);
-      notify("The ring is turning off. Put it on its charger to switch it back on, wait ~10 seconds, then tap Sync. Your interval is re-applied on that Sync.");
+      notify("Ring turning off. Charge it to switch on, then Sync.");
     });
   });
   async function jlProbe() {
