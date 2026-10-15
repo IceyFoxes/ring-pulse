@@ -465,6 +465,7 @@
   const OP = {
     TIME_SYNC: 0x0100, SET_HEART_MONITOR: 0x010C,
     GET_INFO: 0x0200,
+    GET_SLEEP_STATUS: 0x0226, // reply: one status byte (meaning undocumented in the SDK)
     GET_FEATURES: 0x0201, // payload "GF"; reply = feature bitmap (bit set = supported)   // payload "GC"; reply: [id u16, fw minor, fw major, battery state, battery %, ...]
     RT_BATTERY: 0x0615, // ring push: [charging, battery %]
     HEART_TEST: 0x0301, REAL_STREAM: 0x0309, RT_HR: 0x0601,
@@ -842,6 +843,12 @@
         return n && "health log";
       }],
     ];
+    try {
+      const st0 = frames.length;
+      await send(OP.GET_SLEEP_STATUS);
+      const st = await waitFor((f) => f.op === OP.GET_SLEEP_STATUS, 2000, st0);
+      log(st ? `sleep status from ring: ${hex(st.payload)}${st.payload.length === 1 && ERRORS[st.payload[0]] ? ` (${ERRORS[st.payload[0]]})` : ""}` : "sleep status: no reply");
+    } catch (e) { log(`sleep status: ${e.message}`); }
     const stored = () => Object.keys(sleeps).length + Object.entries(metrics).reduce((a, [k, m]) => a + (k === "stepsEnd" || k === "dbp" ? 0 : Object.keys(m).length), 0);
     const report = [["heart rate", "ok", lastHeartCount, lastHeartNew]];
     for (const [name, op, apply] of types) {
