@@ -669,6 +669,7 @@
     await send(OP.TIME_SYNC, [n.getFullYear() & 0xFF, n.getFullYear() >> 8, n.getMonth() + 1, n.getDate(), n.getHours(), n.getMinutes(), n.getSeconds(), wd]);
     setChip("on", "Connected");
     log("connected, clock synced");
+    await reapplyMonitor("on connect");
     const start = frames.length;
     await send(OP.GET_INFO, [0x47, 0x43]);
     const info = await waitFor((f) => f.op === OP.GET_INFO, 3000, start);
@@ -680,6 +681,17 @@
     if (feat && feat.payload.length >= 2) store.set(KEY_FEAT, { bits: feat.payload, at: Date.now() });
     else log("ring did not report its feature list");
   }
+  // Like HealthWear, re-send the automatic heart-rate setting on every connection: the ring can
+  // drop it (e.g. after a cancelled one-off measurement or a reboot), and nothing else restores it.
+  async function reapplyMonitor(why) {
+    const iv = store.get(KEY_IV, null);
+    if (!iv) return;
+    const start = frames.length;
+    await send(OP.SET_HEART_MONITOR, [1, iv]);
+    const ack = await waitFor((f) => f.op === OP.SET_HEART_MONITOR, 2000, start);
+    log(`automatic heart rate re-applied (${why}): every ${iv} min${ack && ack.payload[0] === 0 ? "" : " (no ok from ring)"}`);
+  }
+
   function setBattery(pct, fw) {
     if (pct > 100) return;
     const prev = store.get(KEY_BATT, {});
@@ -998,6 +1010,7 @@
       try {
         if (oneShot) await send(OP.MEASURE, [0, 0]);
         else { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); }
+        await reapplyMonitor("after Measure now");
       } catch {}
       measuring = null;
       btn.classList.remove("on"); btn.textContent = "Measure now";
