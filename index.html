@@ -1310,7 +1310,9 @@
     const spans = stepSpans();
     const info = { iv, base, ceiling, steps: spans.length > 0, blocks: [] };
     if (ceiling == null) return info;
-    const ivMs = iv * 60000, gapMs = tune.mergeGap * 60000;
+    // Always bridge at least one reading interval: at 30-min spacing a single high reading
+    // (turning over, REM) would otherwise split a night into pieces that fall below minBlock.
+    const ivMs = iv * 60000, gapMs = Math.max(tune.mergeGap, iv) * 60000;
     let run = null;
     for (const [d, bpm] of series) {
       const t = d.getTime();
@@ -1548,7 +1550,7 @@
     const parts = [];
     parts.push(est.base != null ? `Your baseline (lowest 10% of heart rate over the last 14 days, roughly your sleeping heart rate): ${est.base} bpm.` : "Baseline: needs at least 30 heart-rate readings.");
     parts.push(est.ceiling != null ? `Ceiling in use: ${est.ceiling} bpm${tune.ceiling != null ? " (fixed)" : ` (baseline + ${tune.offset})`}.` : "");
-    parts.push(`Readings arrive every ~${Math.round(est.iv)} min.`);
+    parts.push(`Readings arrive every ~${Math.round(est.iv)} min, so gaps of up to ${Math.max(tune.mergeGap, Math.round(est.iv))} min are bridged.`);
     parts.push(est.steps ? "Steps from the ring are used to rule out movement." : "No step data from the ring, so the estimate uses heart rate only.");
     $("tuneInfo").textContent = parts.filter(Boolean).join(" ");
   }
