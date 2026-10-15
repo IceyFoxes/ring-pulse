@@ -429,6 +429,11 @@
       <section class="view" data-view="sugar" hidden><div class="metric" id="m-sugar"></div></section>
 
     <section class="view" data-view="ring" hidden>
+      <section class="card" id="offCard">
+        <h2>Restart the ring</h2>
+        <p class="hint">If automatic measuring is stuck, restarting the ring clears it. This turns the ring off (the same command as HealthWear's "Shut down"); then put it on its charger to switch it back on, and tap Sync. Stored data and settings are kept.</p>
+        <button id="btnOff">Turn the ring off</button>
+      </section>
       <section class="card" id="jlCard">
         <h2>JieLi check (read-only)</h2>
         <p class="hint">Your ring's chip (JieLi) has its own sleep-detection setting and file storage, separate from the data Sync reads. This reads them without changing anything. Takes about 10 seconds.</p>
@@ -489,6 +494,7 @@
     GET_FEATURES: 0x0201, // payload "GF"; reply = feature bitmap (bit set = supported)   // payload "GC"; reply: [id u16, fw minor, fw major, battery state, battery %, ...]
     RT_BATTERY: 0x0615, // ring push: [charging, battery %]
     HEART_TEST: 0x0301, REAL_STREAM: 0x0309, RT_HR: 0x0601,
+    SHUT_DOWN: 0x0316,       // [1] = power off (HealthWear "Shut down"); put the ring on its charger to turn it on
     MEASURE: 0x032F,         // [start 1/0, type 0 = heart rate]: one-off measurement
     MEASURE_DONE: 0x040E,    // ring: [type, 1 = ok / 2 = failed]
     HIST_HEART: 0x0506, HIST_BLOCK_END: 0x0580,
@@ -1062,7 +1068,8 @@
     const l = live; live = null;
     clearInterval(l.timer);
     try { await l.wake?.release(); } catch {}
-    if (c1) { try { await send(OP.MEASURE, [0, 0]); await reapplyMonitor("after live"); } catch {} }
+    // Don't interrupt the round in progress (see Measure now); the ring ends it by itself.
+    if (c1) { try { await reapplyMonitor("after live"); } catch {} }
     $("btnLive").classList.remove("on"); $("btnLive").setAttribute("aria-pressed", "false"); $("btnLive").textContent = "Live";
     $("now").classList.remove("live");
     setButtons(); render();
@@ -1113,7 +1120,9 @@
       }
     } finally {
       try {
-        if (oneShot) await send(OP.MEASURE, [0, 0]);
+        // No stop command for one-off measurements: on the RW009, stopping one mid-way left automatic
+        // measuring switched off. The ring finishes the measurement on its own within about a minute.
+        if (oneShot) log(m.cancel ? "cancelled: letting the ring finish its current measurement on its own" : "measurement finished");
         else { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); }
         await reapplyMonitor("after Measure now");
       } catch {}
@@ -1232,7 +1241,7 @@
   });
 
   function setButtons() {
-    for (const id of ["btnSync", "btnMeasure", "btnInterval", "btnJl", "btnLive"]) $(id).disabled = busy || !navigator.bluetooth;
+    for (const id of ["btnSync", "btnMeasure", "btnInterval", "btnJl", "btnLive", "btnOff"]) $(id).disabled = busy || !navigator.bluetooth;
     if (measuring) $("btnMeasure").disabled = false;
     if (live) { $("btnLive").disabled = false; $("btnMeasure").disabled = true; }
   }
@@ -2135,6 +2144,26 @@
   const JL_FILES = [[5, "Sleep"], [3, "Heart rate"], [4, "Blood oxygen"], [9, "Steps"], [2, "Sports records"]];
 
   $("btnJl").addEventListener("click", () => guarded("JieLi check", jlProbe));
+
+  let offArmed = 0;
+  $("btnOff").addEventListener("click", () => {
+    if (Date.now() - offArmed > 6000) {          // first tap arms, second tap within 6 s confirms
+      offArmed = Date.now();
+      $("btnOff").textContent = "Tap again to turn the ring off";
+      setTimeout(() => { if (Date.now() - offArmed >= 6000) $("btnOff").textContent = "Turn the ring off"; }, 6100);
+      return;
+    }
+    offArmed = 0; $("btnOff").textContent = "Turn the ring off";
+    guarded("Turning the ring off", async () => {
+      await connect();
+      const start = frames.length;
+      await send(OP.SHUT_DOWN, [1]);
+      const ack = await waitFor((f) => f.op === OP.SHUT_DOWN, 3000, start);
+      if (ack && ack.payload.length === 1 && ack.payload[0] >= 0xFB) throw new Error(`the ring refused (${ERRORS[ack.payload[0]]})`);
+      log(`shut down sent (${ack ? hex(ack.payload) : "no reply; the ring may already be off"})`);
+      notify("The ring is turning off. Put it on its charger to switch it back on, wait ~10 seconds, then tap Sync. Your interval is re-applied on that Sync.");
+    });
+  });
   async function jlProbe() {
     const out = $("jlOut"); out.hidden = false; out.textContent = "";
     const say = (t) => { out.textContent += t + "\n"; log(`[jl] ${t}`); };
