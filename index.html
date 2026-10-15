@@ -631,7 +631,9 @@
         const fr = { op, payload };
         frames.push(fr);
         if (op === OP.RT_HR && payload.length) onLiveBpm(payload[0]);
-        if (op === OP.RT_BATTERY && payload.length >= 2) setBattery(payload[1]);
+        // 0x0615 is "battery level" in the SDK, but HealthWear never uses it and on the RW009 its
+        // values jump around; battery is taken only from device info (0x0200, byte 5), like HealthWear.
+        if (op === OP.RT_BATTERY) log(`battery push ignored: ${hex(payload)}`);
         waiters = waiters.filter((w) => !(w.pred(fr) && (w.resolve(fr), true)));
       }
     };
