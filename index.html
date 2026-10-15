@@ -191,10 +191,11 @@
   }
   .now .unit { font: 500 13px/1.2 var(--mono); color: var(--muted); padding-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
   .now .when { flex-basis: 100%; font-size: 13px; color: var(--ink-2); }
-  .now.measuring .num { color: var(--accent); }
+  .now.measuring .num, .now.live .num { color: var(--accent); }
+  .now.live .unit::after { content: " · live"; color: var(--accent); }
   .now.measuring .unit::after { content: " · measuring"; color: var(--accent); }
   @keyframes beat { 0%, 100% { transform: scale(1); } 15% { transform: scale(1.04); } }
-  .now.measuring.tick .num { animation: beat 0.5s ease-out; transform-origin: left bottom; }
+  .now.measuring.tick .num, .now.live.tick .num { animation: beat 0.5s ease-out; transform-origin: left bottom; }
 
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .stat { padding: 10px 0; display: grid; gap: 2px; }
@@ -331,7 +332,10 @@
         </dl>
       </section>
 
-      <button class="wide" id="btnMeasure">Measure now</button>
+      <div class="actions">
+        <button id="btnMeasure">Measure now</button>
+        <button id="btnLive" aria-pressed="false">Live</button>
+      </div>
       <section class="card">
         <div class="dayhead">
           <h2>Heart rate</h2>
@@ -721,6 +725,7 @@
   function onDisconnect() {
     c1 = null;
     if (measuring) measuring.cancel = true;
+    if (live) stopLive("the ring disconnected");
     setChip("off", "Not connected");
     log("disconnected");
   }
@@ -1014,8 +1019,59 @@
   };
   async function arm() { await send(OP.HEART_TEST, [1]); await send(OP.REAL_STREAM, [1]); }
 
+  // Live: the ring streams about one reading a second while connected. One reading every 30 s is
+  // saved to the history (chart + sleep estimate). The ring stops after ~30–60 s of silence, so the
+  // stream is re-armed every 45 s; the screen is kept awake because Android pauses Bluetooth for
+  // background tabs.
+  let live = null; // { timer, wake, lastSave, saved, window: [] }
+  async function startLive() {
+    await connect();
+    await arm();
+    live = { lastSave: 0, saved: 0, window: [], timer: setInterval(() => { if (c1) arm().catch((e) => log("live re-arm failed: " + e.message)); }, 45000) };
+    try { live.wake = await navigator.wakeLock?.request("screen"); } catch {}
+    $("btnLive").classList.add("on"); $("btnLive").setAttribute("aria-pressed", "true"); $("btnLive").textContent = "Stop live";
+    $("now").classList.add("live"); $("nowNum").textContent = "…";
+    $("nowWhen").textContent = "Live. Keep this page open with the screen on; one reading every 30 s is saved.";
+    setButtons();
+    log("live started");
+  }
+  function liveReading(bpm) {
+    live.window.push(bpm);
+    const now = Date.now();
+    if (now - live.lastSave >= 30000) {
+      const w = live.window.slice().sort((a, b) => a - b), med = w[Math.floor(w.length / 2)];
+      readings.set(stamp(new Date(now)), med); save();
+      live.lastSave = now; live.saved++; live.window = [];
+      usingExample = false;
+      $("nowWhen").textContent = `Live · ${live.saved} reading${live.saved === 1 ? "" : "s"} saved (every 30 s). Keep this page open with the screen on.`;
+    }
+  }
+  async function stopLive(reason) {
+    if (!live) return;
+    const l = live; live = null;
+    clearInterval(l.timer);
+    try { await l.wake?.release(); } catch {}
+    if (c1) { try { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); await reapplyMonitor("after live"); } catch {} }
+    $("btnLive").classList.remove("on"); $("btnLive").setAttribute("aria-pressed", "false"); $("btnLive").textContent = "Live";
+    $("now").classList.remove("live");
+    setButtons(); render();
+    notify(`Live stopped${reason ? ` (${reason})` : ""}. ${l.saved} reading${l.saved === 1 ? "" : "s"} saved to your history.`);
+    log(`live stopped: ${l.saved} saved`);
+  }
+  $("btnLive").addEventListener("click", () => {
+    if (live) return stopLive();
+    guarded("Live", startLive);
+  });
+  document.addEventListener("visibilitychange", async () => {
+    // The wake lock is dropped when the page is hidden; take it again when the page comes back.
+    if (live && document.visibilityState === "visible") {
+      try { live.wake = await navigator.wakeLock?.request("screen"); } catch {}
+    }
+  });
+
   $("btnMeasure").addEventListener("click", () => {
     if (measuring) { measuring.cancel = true; return; }
+    if (live) return;
     guarded("Measuring", measureNow);
   });
 
@@ -1075,8 +1131,9 @@
       + (ringRec ? "The ring stored it too, so it's in your history." : "Saved to your history on this phone."));
   }
   function onLiveBpm(bpm) {
-    if (!measuring || !bpm) return;
-    measuring.values.push(bpm);
+    if (!bpm || (!measuring && !live)) return;
+    if (measuring) measuring.values.push(bpm);
+    if (live) liveReading(bpm);
     const now = $("now");
     $("nowNum").textContent = bpm;
     now.classList.remove("tick"); void now.offsetWidth; now.classList.add("tick");
@@ -1164,8 +1221,9 @@
   });
 
   function setButtons() {
-    for (const id of ["btnSync", "btnMeasure", "btnInterval", "btnJl"]) $(id).disabled = busy || !navigator.bluetooth;
+    for (const id of ["btnSync", "btnMeasure", "btnInterval", "btnJl", "btnLive"]) $(id).disabled = busy || !navigator.bluetooth;
     if (measuring) $("btnMeasure").disabled = false;
+    if (live) { $("btnLive").disabled = false; $("btnMeasure").disabled = true; }
   }
 
   // ── Data views ──────────────────────────────────────────────────────────
@@ -1198,7 +1256,7 @@
   }
 
   function renderNow() {
-    if (measuring) return;
+    if (measuring || live) return;
     const all = [...source()].sort((a, b) => a[0] < b[0] ? -1 : 1);
     if (!all.length) {
       $("nowNum").textContent = "––";
