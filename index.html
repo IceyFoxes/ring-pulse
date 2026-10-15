@@ -1019,24 +1019,35 @@
   };
   async function arm() { await send(OP.HEART_TEST, [1]); await send(OP.REAL_STREAM, [1]); }
 
-  // Live: the ring streams about one reading a second while connected. One reading every 30 s is
-  // saved to the history (chart + sleep estimate). The ring stops after ~30–60 s of silence, so the
-  // stream is re-armed every 45 s; the screen is kept awake because Android pauses Bluetooth for
-  // background tabs.
-  let live = null; // { timer, wake, lastSave, saved, window: [] }
+  // Live, the way HealthWear's heart-rate screen does it: a one-off measurement (0x032F [1, 0])
+  // lights the sensor and streams values (0x0601); when the ring reports it finished (0x040E),
+  // the next one starts straight away. One reading every 30 s is saved to the history. The screen
+  // is kept awake because Android pauses Bluetooth for background tabs.
+  let live = null; // { timer, wake, lastSave, saved, window, startIdx, lastValueAt, rounds }
+  async function liveRound() {
+    live.startIdx = frames.length; live.lastValueAt = Date.now(); live.rounds++;
+    await send(OP.MEASURE, [1, 0]);
+  }
   async function startLive() {
     await connect();
-    await arm();
-    live = { lastSave: 0, saved: 0, window: [], timer: setInterval(() => { if (c1) arm().catch((e) => log("live re-arm failed: " + e.message)); }, 45000) };
+    live = { lastSave: 0, saved: 0, window: [], startIdx: 0, lastValueAt: Date.now(), rounds: 0 };
+    await liveRound();
+    const ack = await waitFor((f) => f.op === OP.MEASURE, 3000, live.startIdx);
+    if (ack && ack.payload.length === 1 && ack.payload[0] >= 0xFB) { const why = ERRORS[ack.payload[0]]; live = null; throw new Error(`the ring refused to start measuring (${why})`); }
+    live.timer = setInterval(() => {
+      if (!live || !c1) return;
+      const done = frames.slice(live.startIdx).some((f) => f.op === OP.MEASURE_DONE);
+      if (done || Date.now() - live.lastValueAt > 45000) liveRound().catch((e) => log("live restart failed: " + e.message));
+    }, 2000);
     try { live.wake = await navigator.wakeLock?.request("screen"); } catch {}
     $("btnLive").classList.add("on"); $("btnLive").setAttribute("aria-pressed", "true"); $("btnLive").textContent = "Stop live";
     $("now").classList.add("live"); $("nowNum").textContent = "…";
-    $("nowWhen").textContent = "Live. Keep this page open with the screen on; one reading every 30 s is saved.";
+    $("nowWhen").textContent = "Live. The ring's green light should come on; first value in ~10 s. Keep this page open with the screen on.";
     setButtons();
     log("live started");
   }
   function liveReading(bpm) {
-    live.window.push(bpm);
+    live.window.push(bpm); live.lastValueAt = Date.now();
     const now = Date.now();
     if (now - live.lastSave >= 30000) {
       const w = live.window.slice().sort((a, b) => a - b), med = w[Math.floor(w.length / 2)];
@@ -1051,12 +1062,12 @@
     const l = live; live = null;
     clearInterval(l.timer);
     try { await l.wake?.release(); } catch {}
-    if (c1) { try { await send(OP.HEART_TEST, [0]); await send(OP.REAL_STREAM, [0]); await reapplyMonitor("after live"); } catch {} }
+    if (c1) { try { await send(OP.MEASURE, [0, 0]); await reapplyMonitor("after live"); } catch {} }
     $("btnLive").classList.remove("on"); $("btnLive").setAttribute("aria-pressed", "false"); $("btnLive").textContent = "Live";
     $("now").classList.remove("live");
     setButtons(); render();
     notify(`Live stopped${reason ? ` (${reason})` : ""}. ${l.saved} reading${l.saved === 1 ? "" : "s"} saved to your history.`);
-    log(`live stopped: ${l.saved} saved`);
+    log(`live stopped: ${l.saved} saved over ${l.rounds} measurement${l.rounds === 1 ? "" : "s"}`);
   }
   $("btnLive").addEventListener("click", () => {
     if (live) return stopLive();
