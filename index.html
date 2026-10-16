@@ -352,6 +352,7 @@
           <summary id="tableSummary">Readings</summary>
           <div class="tablewrap"><table><thead><tr><th>Time</th><th>BPM</th><th>Gap</th></tr></thead><tbody id="tbody"></tbody></table></div>
         </details>
+          <button class="small" id="btnCopyDay">Copy this day's readings</button>
       </section>
 
       <section class="card">
@@ -1170,6 +1171,25 @@
 
   // One CSV for everything: kind,time,end,value,deep_min,light_min,rem_min,awake_min
   // (sleep "value" is minutes asleep). Import also accepts the PC script's time,bpm,mode file.
+  // Copy the selected day's heart-rate readings as plain text ("HH:MM  bpm" per line).
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand("copy"); } catch {}
+      ta.remove(); return ok;
+    }
+  }
+  $("btnCopyDay").addEventListener("click", async () => {
+    const rows = dayRows(viewDay);
+    if (!rows.length) return notify("No readings on this day.");
+    const label = viewDay.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    const text = `Heart rate, ${label} (${rows.length} readings)\n` + rows.map(([d, b]) => `${pad(d.getHours())}:${pad(d.getMinutes())}  ${b}`).join("\n");
+    notify((await copyText(text)) ? `Copied ${rows.length} readings.` : "Couldn't copy. Use Export CSV instead.");
+  });
+
   $("btnCopyLog").addEventListener("click", async () => {
     const text = logEl.textContent;
     try { await navigator.clipboard.writeText(text); notify("Log copied."); }
